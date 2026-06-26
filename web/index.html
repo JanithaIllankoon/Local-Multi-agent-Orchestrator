@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Local Multi-Agent Orchestrator</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header>
+    <span class="logo">🧠 Local Multi-Agent Orchestrator</span>
+    <select id="mode" title="Orchestration mode">
+      <option value="auto">Auto</option>
+      <option value="simple">Simple</option>
+      <option value="coding">Coding</option>
+    </select>
+  </header>
+
+  <main>
+    <!-- Left: the conversation with the user -->
+    <section class="panel chat">
+      <h2>Chat</h2>
+      <div id="messages"></div>
+      <div class="composer">
+        <textarea id="input" placeholder="Ask the orchestrator..."></textarea>
+        <button id="send">Run</button>
+      </div>
+    </section>
+
+    <!-- Right: the internal agent steps (for debugging / curiosity) -->
+    <section class="panel trace">
+      <h2>Agent Trace</h2>
+      <div id="trace"></div>
+    </section>
+  </main>
+
+  <footer><span id="status">Idle</span></footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,58 +1,77 @@
 """
-model_client.py  -  INTERFACE SKETCH (not implemented yet)
+model_client.py
 
-The single async entry point for talking to any llama.cpp server. Every agent
-goes through call_model(role=...); nothing in the codebase should ever hardcode
-a URL or model name. This is the seam that makes "swap models via config only"
-true.
+The single way the app talks to any model. Every agent calls call_model(role=...)
+and never worries about URLs, retries, or which model is behind the role.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any
+
+import httpx
+
+from .model_registry import registry
 
 
 @dataclass
 class ModelResponse:
     role: str
-    content: str               # final answer text (message.content)
-    reasoning: str | None      # message.reasoning_content - R1/thinking models
-                               # emit chain-of-thought here, NOT in content.
-                               # Store it in the trace; never use it as the answer.
+    content: str               # the final answer text
+    reasoning: str | None      # chain-of-thought, if the model returns it
+                               # separately (DeepSeek-R1 does). For the trace,
+                               # never used as the answer itself.
     latency_ms: int
-    raw: dict[str, Any]        # full provider JSON, for logging / token counts
-
-    # NOTE: reasoning models (DeepSeek-R1 distill) can return content="" if
-    # max_tokens is too small - they spend the budget thinking. Give reasoning
-    # roles a generous max_tokens (see reasoning_critic in models.yaml).
+    raw: dict[str, Any]        # full server JSON, kept for logging
 
 
 async def call_model(
     role: str,
     messages: list[dict[str, str]],
     *,
-    temperature: float | None = None,   # None -> use the role's config value
+    temperature: float | None = None,   # None = use the role's default
     max_tokens: int | None = None,
-    response_format: dict | None = None,  # e.g. {"type": "json_object"}
-    grammar: str | None = None,           # optional GBNF to force valid JSON
 ) -> ModelResponse:
     """
-    Resolve `role` -> endpoint + defaults via the registry, POST an
-    OpenAI-style /v1/chat/completions request with httpx, retry on
-    timeout/5xx per backend_defaults, and return a ModelResponse.
-
-    Phase 0: registry resolves every role to single_endpoint, so this works
-    against one running llama-server. Phase 2: ensure_role_ready(role) is
-    called first so the right server is up before the request.
+    Send an OpenAI-style chat request for `role` and return the reply.
+    Retries on network/5xx errors per backend_defaults in models.yaml.
     """
-    raise NotImplementedError
+    cfg = registry.get_role(role)
 
+    payload = {
+        "model": role,  # llama.cpp ignores this, but the API expects the field
+        "messages": messages,
+        "temperature": cfg.temperature if temperature is None else temperature,
+        "max_tokens": cfg.max_tokens if max_tokens is None else max_tokens,
+    }
 
-def parse_json_lenient(text: str) -> dict | None:
-    """
-    Local 7B models emit broken JSON constantly (code fences, trailing prose,
-    smart quotes). Try strict json.loads, then strip ```json fences, then
-    regex the outermost {...}. Returns None if all fail so the caller can run
-    the §24 repair loop (ask the same model to fix its JSON) before giving up.
-    """
-    raise NotImplementedError
+    last_error: Exception | None = None
+    # Try once, then retry up to max_retries more times if the call fails.
+    for attempt in range(registry.max_retries + 1):
+        try:
+            start = time.perf_counter()
+            async with httpx.AsyncClient(timeout=registry.timeout_seconds) as client:
+                resp = await client.post(cfg.endpoint, json=payload)
+                resp.raise_for_status()
+            latency_ms = int((time.perf_counter() - start) * 1000)
+
+            data = resp.json()
+            message = data["choices"][0]["message"]
+            return ModelResponse(
+                role=role,
+                content=message.get("content") or "",
+                reasoning=message.get("reasoning_content"),
+                latency_ms=latency_ms,
+                raw=data,
+            )
+        except Exception as e:  # network error, timeout, bad status, bad JSON
+            last_error = e
+            # Don't sleep-spin on the last attempt; just fall through to raise.
+            if attempt < registry.max_retries:
+                continue
+
+    raise RuntimeError(
+        f"call_model(role='{role}') failed after {registry.max_retries + 1} "
+        f"attempts against {cfg.endpoint}: {last_error}"
+    )

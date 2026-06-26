@@ -1,52 +1,129 @@
 """
-orchestrator.py  -  INTERFACE SKETCH (not implemented yet)
+orchestrator.py
 
-The task controller. NOT a chatbot wrapper. It owns the per-mode pipelines.
-Notice it only ever names ROLES, never models or endpoints, and it emits trace
-events as it goes (so the UI can stream them over SSE instead of waiting for a
-final blob).
+The task controller. It runs the agents in order and yields a TraceEvent after
+each step so the UI can show progress live. The last event is always the final
+answer.
+
+Phase 0 has two flows:
+  - simple mode:  supervisor answers directly (chat / simple questions)
+  - coding mode:  supervisor -> fast coder -> strong coder -> critic -> finalize
 """
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
+from ..models import prompt_templates as P
+from ..models.model_client import call_model
+
 
 @dataclass
 class TraceEvent:
-    agent_role: str       # "supervisor", "coder_fast", ...
-    event_type: str       # "plan" | "agent_response" | "critic_response" | "final_answer" | "error"
-    content: str
+    agent_role: str       # which agent produced this, e.g. "supervisor"
+    event_type: str       # "plan" | "agent_response" | "final_answer" | "error"
+    content: str          # the text shown in the trace card
+    reasoning: str | None = None   # optional chain-of-thought for the trace
     latency_ms: int | None = None
+    is_final: bool = False         # true only on the user-facing answer
 
 
-async def handle_message(session_id: str, message: str, mode: str = "auto") -> AsyncIterator[TraceEvent]:
+def _msg(role: str, content: str) -> dict[str, str]:
+    """Tiny helper to build one chat message."""
+    return {"role": role, "content": content}
+
+
+async def handle_message(message: str, mode: str = "auto") -> AsyncIterator[TraceEvent]:
     """
-    Top-level entry called by POST /api/chat. Yields TraceEvents as each agent
-    finishes so the UI updates live; the last event is event_type="final_answer".
-
-    'auto' asks the supervisor to classify, then dispatches to one of the mode
-    pipelines below. MVP only needs run_coding_mode well enough to pass the
-    Plan.txt §31 acceptance test.
+    Entry point used by the API. Picks a flow and streams its trace events.
+    'auto' uses a keyword guess for now; later the supervisor will classify.
     """
-    raise NotImplementedError
+    try:
+        if mode == "simple":
+            chosen = "simple"
+        elif mode == "coding":
+            chosen = "coding"
+        else:
+            # Cheap guess: treat code-ish requests as coding, else simple.
+            chosen = "coding" if _looks_like_coding(message) else "simple"
+
+        if chosen == "coding":
+            async for ev in run_coding_mode(message):
+                yield ev
+        else:
+            async for ev in run_simple_mode(message):
+                yield ev
+    except Exception as e:
+        # Surface any failure to the UI instead of hanging silently.
+        yield TraceEvent("system", "error", f"Something went wrong: {e}", is_final=True)
 
 
-async def run_coding_mode(session_id: str, message: str) -> AsyncIterator[TraceEvent]:
-    """
-    The MVP pipeline (Plan.txt §21.2):
-
-        supervisor.create_plan(message)            -> TraceEvent(plan)
-        coder_fast.run(message, plan)              -> TraceEvent(agent_response)
-        coder_strong.run(message, plan, fast)      -> TraceEvent(agent_response)
-        reasoning_critic.run(..., strong)          -> TraceEvent(critic_response)
-        supervisor.finalize([fast, strong, critic])-> TraceEvent(final_answer)
-
-    No tools. Each step is one call_model() behind an agent's system prompt.
-    """
-    raise NotImplementedError
+def _looks_like_coding(message: str) -> bool:
+    keywords = ("code", "script", "function", "bug", "python", "javascript",
+                "write a", "program", "class ", "def ", "review this")
+    text = message.lower()
+    return any(k in text for k in keywords)
 
 
-async def run_simple_mode(session_id: str, message: str) -> AsyncIterator[TraceEvent]:
-    """User -> supervisor -> final answer. For chit-chat / trivial questions."""
-    raise NotImplementedError
+async def run_simple_mode(message: str) -> AsyncIterator[TraceEvent]:
+    """User -> supervisor -> answer. For ordinary questions."""
+    reply = await call_model(
+        "supervisor",
+        [_msg("system", P.SUPERVISOR), _msg("user", message)],
+    )
+    yield TraceEvent("supervisor", "final_answer", reply.content,
+                     reasoning=reply.reasoning, latency_ms=reply.latency_ms,
+                     is_final=True)
+
+
+async def run_coding_mode(message: str) -> AsyncIterator[TraceEvent]:
+    """The core multi-agent pipeline (Phase 0/1)."""
+
+    # 1. Supervisor makes a short plan.
+    plan = await call_model(
+        "supervisor",
+        [_msg("system", P.SUPERVISOR),
+         _msg("user", f"Make a short plan to handle this request:\n\n{message}")],
+    )
+    yield TraceEvent("supervisor", "plan", plan.content,
+                     reasoning=plan.reasoning, latency_ms=plan.latency_ms)
+
+    # 2. Fast coder writes a first version.
+    fast = await call_model(
+        "coder_fast",
+        [_msg("system", P.CODER_FAST),
+         _msg("user", f"Request:\n{message}\n\nPlan:\n{plan.content}")],
+    )
+    yield TraceEvent("coder_fast", "agent_response", fast.content,
+                     latency_ms=fast.latency_ms)
+
+    # 3. Strong coder reviews and improves it.
+    strong = await call_model(
+        "coder_strong",
+        [_msg("system", P.CODER_STRONG),
+         _msg("user", f"Request:\n{message}\n\nFirst version:\n{fast.content}")],
+    )
+    yield TraceEvent("coder_strong", "agent_response", strong.content,
+                     latency_ms=strong.latency_ms)
+
+    # 4. Critic looks for flaws and edge cases.
+    critic = await call_model(
+        "reasoning_critic",
+        [_msg("system", P.REASONING_CRITIC),
+         _msg("user", f"Request:\n{message}\n\nCode to review:\n{strong.content}")],
+    )
+    yield TraceEvent("reasoning_critic", "agent_response", critic.content,
+                     reasoning=critic.reasoning, latency_ms=critic.latency_ms)
+
+    # 5. Supervisor merges everything into the final answer for the user.
+    final = await call_model(
+        "supervisor",
+        [_msg("system", P.SUPERVISOR),
+         _msg("user",
+              f"{P.FINALIZE}\n\nUser request:\n{message}\n\n"
+              f"Improved code:\n{strong.content}\n\n"
+              f"Critic notes:\n{critic.content}")],
+    )
+    yield TraceEvent("supervisor", "final_answer", final.content,
+                     reasoning=final.reasoning, latency_ms=final.latency_ms,
+                     is_final=True)

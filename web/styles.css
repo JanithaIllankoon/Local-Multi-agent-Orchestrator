@@ -1,0 +1,149 @@
+:root {
+  --bg: #0E1A24;
+  --panel: #10212C;
+  --panel-deep: #081119;
+  --text: #E9F5F1;
+  --muted: #8EA4A0;
+  --accent: #1DCB97;
+  --border: rgba(255, 255, 255, 0.12);
+  --danger: #FF5C5C;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+header, footer {
+  background: var(--panel-deep);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+footer { border-top: 1px solid var(--border); border-bottom: none; font-size: 13px; color: var(--muted); }
+.logo { font-weight: 600; }
+header select {
+  margin-left: auto;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+}
+
+/* Two columns: chat on the left, trace on the right */
+main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.panel {
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.panel h2 {
+  margin: 0;
+  padding: 10px 16px;
+  font-size: 14px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+
+#messages, #trace {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+/* Chat bubbles */
+.bubble { margin-bottom: 14px; }
+.bubble .who { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.bubble .body {
+  white-space: pre-wrap;
+  background: var(--panel-deep);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  line-height: 1.5;
+}
+.bubble.user .body { border-color: var(--accent); }
+
+/* Composer (input box + button) */
+.composer {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+}
+#input {
+  flex: 1;
+  resize: none;
+  height: 56px;
+  background: var(--panel-deep);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: inherit;
+}
+#send {
+  background: var(--accent);
+  color: #04130D;
+  border: none;
+  border-radius: 8px;
+  padding: 0 20px;
+  font-weight: 600;
+  cursor: pointer;
+}
+#send:disabled { opacity: 0.5; cursor: default; }
+
+/* Trace cards - one per agent step */
+.trace-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+.trace-card .head {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--panel-deep);
+  cursor: pointer;
+  font-size: 13px;
+}
+.trace-card .role { color: var(--accent); font-weight: 600; }
+.trace-card .meta { color: var(--muted); }
+.trace-card .content {
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.5;
+  border-top: 1px solid var(--border);
+}
+/* Collapsed cards hide their body (toggled in app.js) */
+.trace-card.collapsed .content { display: none; }
+.trace-card .reasoning {
+  color: var(--muted);
+  font-style: italic;
+  border-top: 1px dashed var(--border);
+  padding: 8px 12px;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+.error .role { color: var(--danger); }
