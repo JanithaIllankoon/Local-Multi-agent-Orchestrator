@@ -13,6 +13,7 @@ const ROLE_LABELS = {
   coder_fast: "Fast Coder",
   coder_strong: "Strong Coder",
   reasoning_critic: "Reasoning Critic",
+  contrarian_critic: "Contrarian Critic",
   system: "System",
 };
 

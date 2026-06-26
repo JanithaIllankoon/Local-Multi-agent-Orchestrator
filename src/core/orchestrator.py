@@ -39,15 +39,16 @@ async def handle_message(message: str, mode: str = "auto") -> AsyncIterator[Trac
     'auto' uses a keyword guess for now; later the supervisor will classify.
     """
     try:
-        if mode == "simple":
-            chosen = "simple"
-        elif mode == "coding":
-            chosen = "coding"
+        if mode in ("simple", "coding", "deep_review"):
+            chosen = mode
         else:
             # Cheap guess: treat code-ish requests as coding, else simple.
             chosen = "coding" if _looks_like_coding(message) else "simple"
 
-        if chosen == "coding":
+        if chosen == "deep_review":
+            async for ev in run_deep_review_mode(message):
+                yield ev
+        elif chosen == "coding":
             async for ev in run_coding_mode(message):
                 yield ev
         else:
@@ -123,6 +124,70 @@ async def run_coding_mode(message: str) -> AsyncIterator[TraceEvent]:
               f"{P.FINALIZE}\n\nUser request:\n{message}\n\n"
               f"Improved code:\n{strong.content}\n\n"
               f"Critic notes:\n{critic.content}")],
+    )
+    yield TraceEvent("supervisor", "final_answer", final.content,
+                     reasoning=final.reasoning, latency_ms=final.latency_ms,
+                     is_final=True)
+
+
+async def run_deep_review_mode(message: str) -> AsyncIterator[TraceEvent]:
+    """
+    Like coding mode, but adds the contrarian critic for a second, harsher
+    opinion before the supervisor finalizes. Use for high-stakes tasks.
+    """
+
+    # Steps 1-4 are the same as coding mode: plan, two coders, reasoning critic.
+    plan = await call_model(
+        "supervisor",
+        [_msg("system", P.SUPERVISOR),
+         _msg("user", f"Make a short plan to handle this request:\n\n{message}")],
+    )
+    yield TraceEvent("supervisor", "plan", plan.content,
+                     reasoning=plan.reasoning, latency_ms=plan.latency_ms)
+
+    fast = await call_model(
+        "coder_fast",
+        [_msg("system", P.CODER_FAST),
+         _msg("user", f"Request:\n{message}\n\nPlan:\n{plan.content}")],
+    )
+    yield TraceEvent("coder_fast", "agent_response", fast.content,
+                     latency_ms=fast.latency_ms)
+
+    strong = await call_model(
+        "coder_strong",
+        [_msg("system", P.CODER_STRONG),
+         _msg("user", f"Request:\n{message}\n\nFirst version:\n{fast.content}")],
+    )
+    yield TraceEvent("coder_strong", "agent_response", strong.content,
+                     latency_ms=strong.latency_ms)
+
+    critic = await call_model(
+        "reasoning_critic",
+        [_msg("system", P.REASONING_CRITIC),
+         _msg("user", f"Request:\n{message}\n\nCode to review:\n{strong.content}")],
+    )
+    yield TraceEvent("reasoning_critic", "agent_response", critic.content,
+                     reasoning=critic.reasoning, latency_ms=critic.latency_ms)
+
+    # 5. Extra step: contrarian critic challenges the whole approach.
+    contrarian = await call_model(
+        "contrarian_critic",
+        [_msg("system", P.CONTRARIAN_CRITIC),
+         _msg("user", f"Request:\n{message}\n\nProposed solution:\n{strong.content}\n\n"
+                      f"Reasoning critic already said:\n{critic.content}")],
+    )
+    yield TraceEvent("contrarian_critic", "agent_response", contrarian.content,
+                     reasoning=contrarian.reasoning, latency_ms=contrarian.latency_ms)
+
+    # 6. Supervisor weighs both critics and writes the final answer.
+    final = await call_model(
+        "supervisor",
+        [_msg("system", P.SUPERVISOR),
+         _msg("user",
+              f"{P.FINALIZE}\n\nUser request:\n{message}\n\n"
+              f"Improved code:\n{strong.content}\n\n"
+              f"Reasoning critic notes:\n{critic.content}\n\n"
+              f"Contrarian critic notes:\n{contrarian.content}")],
     )
     yield TraceEvent("supervisor", "final_answer", final.content,
                      reasoning=final.reasoning, latency_ms=final.latency_ms,

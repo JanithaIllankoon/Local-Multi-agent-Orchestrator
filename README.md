@@ -132,8 +132,8 @@ and watch the agents work in a live trace. Today everything runs on a single
 local model; per-role models land in Phase 2.
 
 - [x] **Phase 0** — Backend + chat UI + live agent trace ✅
-- [~] **Phase 1** — Multi-agent coding pipeline (supervisor → 2 coders → critic).
-  *Done. Contrarian critic + Deep Review mode still to add.*
+- [x] **Phase 1** — Multi-agent pipeline: supervisor → 2 coders → reasoning critic
+  → contrarian critic, with Coding and Deep Review modes ✅
 - [ ] **Phase 2** — Session persistence + automatic local model swapping (each role its own model)
 - [ ] **Phase 3** — Filesystem tools (sandboxed workspace)
 - [ ] **Phase 4** — Shell execution + self-repair loop

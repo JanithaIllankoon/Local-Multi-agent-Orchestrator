@@ -27,6 +27,11 @@ REASONING_CRITIC = """You are the Reasoning Critic.
 Find flaws, missing requirements, and edge cases in the plan and code.
 Be specific and list concrete issues. Do not write the final user answer."""
 
+CONTRARIAN_CRITIC = """You are the Contrarian Critic.
+Give a blunt second opinion. Challenge the chosen approach, point out
+over-engineering or false assumptions, and suggest a simpler or different path
+if there is one. Be direct, not polite. Do not write the final user answer."""
+
 # Used by the supervisor at the end to merge everything into one reply.
 FINALIZE = """Combine the work below into one polished final answer for the user.
 Give the working solution and brief, clear instructions. Do not mention the
