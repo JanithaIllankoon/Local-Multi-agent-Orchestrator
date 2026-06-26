@@ -97,6 +97,25 @@ its own. Only a deterministic, safety-gated Executor can — and only in later p
    └────────────────────┘
 ```
 
+## The AI team (default models)
+
+Each role is filled by a local model chosen to fit a single 8GB GPU. Swap any of
+them by editing [`config/models.yaml`](config/models.yaml) — no code changes.
+Models are **not** included in this repo (they're multi-GB); download them from
+Hugging Face into a local `models/` folder.
+
+| Role | Model | What it does |
+|------|-------|--------------|
+| 🧭 Supervisor / tools | [Qwen3-Coder-30B-A3B-Instruct](https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct) | Plans, delegates, calls tools, writes the final answer |
+| ⚡ Fast coder | (shares the supervisor model) | Quick first-draft implementations |
+| 🛠️ Strong coder | [Qwen3.6-27B](https://huggingface.co/Qwen/Qwen3.6-27B) | Reviews and hardens code, harder problems |
+| 🔍 Reasoning critic | [DeepSeek-R1-0528-Qwen3-8B](https://huggingface.co/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF) | Finds flaws, edge cases, weak assumptions |
+| 😈 Contrarian critic | [Qwen3-8B-abliterated](https://huggingface.co/huihui-ai/Qwen3-8B-abliterated) | Low-refusal harsh second opinions *(planned)* |
+| 👁️ Vision observer | [Qwen3-VL-8B-Thinking](https://huggingface.co/Qwen/Qwen3-VL-8B-Thinking) | Describes screenshots / GUI state *(Phase 6)* |
+
+> On an 8GB GPU these run **one at a time** (the orchestrator swaps between them),
+> so each model gets the full GPU while it's active.
+
 ## Tech stack
 
 - **Models:** local GGUF models served by `llama-server` (llama.cpp), OpenAI-compatible API
