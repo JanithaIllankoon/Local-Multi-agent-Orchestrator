@@ -15,9 +15,16 @@ from typing import Any
 @dataclass
 class ModelResponse:
     role: str
-    content: str          # raw assistant text
+    content: str               # final answer text (message.content)
+    reasoning: str | None      # message.reasoning_content - R1/thinking models
+                               # emit chain-of-thought here, NOT in content.
+                               # Store it in the trace; never use it as the answer.
     latency_ms: int
-    raw: dict[str, Any]   # full provider JSON, for logging / token counts
+    raw: dict[str, Any]        # full provider JSON, for logging / token counts
+
+    # NOTE: reasoning models (DeepSeek-R1 distill) can return content="" if
+    # max_tokens is too small - they spend the budget thinking. Give reasoning
+    # roles a generous max_tokens (see reasoning_critic in models.yaml).
 
 
 async def call_model(

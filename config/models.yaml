@@ -24,17 +24,19 @@ single_endpoint: "http://127.0.0.1:8001/v1/chat/completions"
 
 # Concrete gguf files live in models/ (git-ignored). Download targets:
 model_paths:
-  # supervisor: Qwen3-Coder-30B-A3B-Instruct (MoE 30B / ~3B active), Q3_K_M
-  qwen3_coder_30b_a3b: "models/Qwen3-Coder-30B-A3B-Instruct-Q3_K_M.gguf"
-  # strong coder: Qwen3.6-27B dense, Q3_K_M (unsloth)
-  qwen36_27b:          "models/Qwen3.6-27B-Q3_K_M.gguf"
-  # uncensored/contrarian: Qwen3-8B abliterated (Mungert), Q4_K_M
-  qwen3_8b_abliterated: "models/Qwen3-8B-abliterated-Q4_K_M.gguf"
-  # reasoner: DeepSeek-R1-0528-Qwen3-8B (unsloth), Q4_K_M
+  # supervisor: Qwen3-Coder-30B-A3B-Instruct (MoE 30B / ~3B active), Q4_K_M (~17GB)
+  qwen3_coder_30b_a3b: "models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
+  # strong coder: Qwen3.6-27B dense, Q3_K_S (~11.5GB)
+  qwen36_27b:          "models/Qwen3.6-27B-Q3_K_S.gguf"
+  # uncensored/contrarian: Qwen3-8B abliterated, Q3_K_M
+  qwen3_8b_abliterated: "models/Qwen3-8B-abliterated-q3_k_m.gguf"
+  # reasoner: DeepSeek-R1-0528-Qwen3-8B, Q4_K_M
   deepseek_r1_qwen3_8b: "models/DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf"
-  # vision: Qwen3-VL-8B-Thinking, Q4 + mmproj
-  qwen3_vl_8b:          "models/Qwen3-VL-8B-Thinking-Q4_K_M.gguf"
-  qwen3_vl_8b_mmproj:   "models/Qwen3-VL-8B-Thinking-mmproj-f16.gguf"
+  # vision: Qwen3-VL-8B-Thinking abliterated, Q4_K_M
+  # NOTE: Qwen3-VL needs an mmproj file for image input; download it before
+  # wiring up Phase 6, then set qwen3_vl_8b_mmproj below.
+  qwen3_vl_8b:          "models/Qwen3-VL-8B-Thinking-abliterated-v1.Q4_K_M.gguf"
+  qwen3_vl_8b_mmproj:   "models/Qwen3-VL-8B-Thinking-mmproj-f16.gguf"  # TODO: not yet downloaded
 
 roles:
   # The supervisor also handles tool calling. It runs on every request, so it

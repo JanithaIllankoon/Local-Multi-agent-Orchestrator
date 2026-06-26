@@ -21,16 +21,16 @@ servers:
     port: 8001
     command: >
       llama-server
-      -m "models/Qwen3-Coder-30B-A3B-Instruct-Q3_K_M.gguf"
+      -m "models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
       --host 127.0.0.1 --port 8001
-      --jinja -c 8192 -ngl 99 --n-cpu-moe 24
+      --jinja -c 8192 -ngl 99 --n-cpu-moe 28
 
   # Strong coder: dense 27B. Heaviest model; will use CPU+disk. Slow by design.
   coder_strong:
     port: 8003
     command: >
       llama-server
-      -m "models/Qwen3.6-27B-Q3_K_M.gguf"
+      -m "models/Qwen3.6-27B-Q3_K_S.gguf"
       --host 127.0.0.1 --port 8003
       --jinja -c 8192 -ngl 35
 
@@ -48,7 +48,7 @@ servers:
     port: 8005
     command: >
       llama-server
-      -m "models/Qwen3-8B-abliterated-Q4_K_M.gguf"
+      -m "models/Qwen3-8B-abliterated-q3_k_m.gguf"
       --host 127.0.0.1 --port 8005
       --jinja -c 8192 -ngl 99
 
@@ -57,7 +57,7 @@ servers:
     port: 8006
     command: >
       llama-server
-      -m "models/Qwen3-VL-8B-Thinking-Q4_K_M.gguf"
+      -m "models/Qwen3-VL-8B-Thinking-abliterated-v1.Q4_K_M.gguf"
       --mmproj "models/Qwen3-VL-8B-Thinking-mmproj-f16.gguf"
       --host 127.0.0.1 --port 8006
       -c 4096 -ngl 99
