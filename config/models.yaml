@@ -3,101 +3,95 @@
 # Role-based model registry. The orchestrator only ever refers to ROLES,
 # never to concrete model names. Swapping a model = editing this file only.
 #
-# IMPORTANT (8-12GB GPU reality):
-#   You cannot hold all of these on the GPU at once. Several roles deliberately
-#   SHARE a gguf so the ModelServerManager can avoid reloading weights when it
-#   swaps between them. The `gguf` + `port` fields below are what the server
-#   manager uses to decide "is the model this role needs already running?".
+# HARDWARE TARGET: 8GB VRAM + ~12GB usable system RAM (~20GB total).
+#   -> ONE model server alive at a time (lazy sequential). NEVER run two big
+#      models at once; that is the only thing that would exhaust memory.
+#   -> Big models (27B/30B) rely on mmap (llama.cpp default): weights page
+#      from disk, so they don't crash on limited RAM, just run slower.
+#   -> Keep context small (-c) so KV-cache/compute buffers fit in real memory.
 #
-# PHASE 0 / MVP: ignore the per-role endpoints and point EVERYTHING at the
-# single running server (127.0.0.1:8001). Set `single_endpoint_mode: true` and
-# the registry will override every role's endpoint with `single_endpoint`.
-# This lets you build the whole orchestration loop on one model first.
+# PHASE 0 / MVP: keep single_endpoint_mode true and point everything at one
+# running server so the orchestration loop can be built on a single model
+# (use the supervisor model). Flip to false once ModelServerManager exists.
 
 backend_defaults:
   provider: "openai_compatible"
-  timeout_seconds: 300
+  timeout_seconds: 600          # big models on this hardware are slow; be patient
   max_retries: 2
 
-# --- MVP switch -------------------------------------------------------------
-# While true, every role resolves to `single_endpoint` regardless of the
-# per-role endpoint below. Flip to false once ModelServerManager + real
-# per-role servers exist.
 single_endpoint_mode: true
 single_endpoint: "http://127.0.0.1:8001/v1/chat/completions"
 
-# Concrete gguf files live here. Only ~3 real downloads back all 7 roles.
+# Concrete gguf files live in models/ (git-ignored). Download targets:
 model_paths:
-  qwen25_7b_instruct: "models/Qwen2.5-7B-Instruct-Q4_K_M.gguf"
-  qwen25_coder_7b:    "models/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf"
-  qwen25_coder_3b:    "models/Qwen2.5-Coder-3B-Instruct-Q4_K_M.gguf"
-  qwen25_3b_instruct: "models/Qwen2.5-3B-Instruct-Q4_K_M.gguf"
-  # vision is deferred to Phase 6 - listed for completeness only
-  qwen25_vl_7b:       "models/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf"
-  qwen25_vl_7b_mmproj: "models/Qwen2.5-VL-7B-Instruct-mmproj-f16.gguf"
+  # supervisor: Qwen3-Coder-30B-A3B-Instruct (MoE 30B / ~3B active), Q3_K_M
+  qwen3_coder_30b_a3b: "models/Qwen3-Coder-30B-A3B-Instruct-Q3_K_M.gguf"
+  # strong coder: Qwen3.6-27B dense, Q3_K_M (unsloth)
+  qwen36_27b:          "models/Qwen3.6-27B-Q3_K_M.gguf"
+  # uncensored/contrarian: Qwen3-8B abliterated (Mungert), Q4_K_M
+  qwen3_8b_abliterated: "models/Qwen3-8B-abliterated-Q4_K_M.gguf"
+  # reasoner: DeepSeek-R1-0528-Qwen3-8B (unsloth), Q4_K_M
+  deepseek_r1_qwen3_8b: "models/DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf"
+  # vision: Qwen3-VL-8B-Thinking, Q4 + mmproj
+  qwen3_vl_8b:          "models/Qwen3-VL-8B-Thinking-Q4_K_M.gguf"
+  qwen3_vl_8b_mmproj:   "models/Qwen3-VL-8B-Thinking-mmproj-f16.gguf"
 
 roles:
+  # The supervisor also handles tool calling. It runs on every request, so it
+  # is the model to keep mmap-warm. MoE -> put experts on CPU, keep the active
+  # path + KV on GPU (--n-cpu-moe in server_commands.yaml).
   supervisor:
-    gguf: qwen25_7b_instruct
+    gguf: qwen3_coder_30b_a3b
     endpoint: "http://127.0.0.1:8001/v1/chat/completions"
     temperature: 0.2
-    max_tokens: 3000
+    max_tokens: 4000
     context_window: 8192
-    capabilities: [planning, reasoning, delegation, final_response]
-    can_call_tools: false
+    capabilities: [planning, reasoning, delegation, tool_calling, final_response]
+    can_call_tools: true
 
   coder_fast:
-    gguf: qwen25_coder_3b
-    endpoint: "http://127.0.0.1:8002/v1/chat/completions"
+    # No tiny dedicated coder in this set; reuse the supervisor MoE for fast
+    # coding too (it is already loaded and is itself a strong coder).
+    gguf: qwen3_coder_30b_a3b
+    endpoint: "http://127.0.0.1:8001/v1/chat/completions"
     temperature: 0.15
-    max_tokens: 3000
+    max_tokens: 4000
     context_window: 8192
     capabilities: [coding, patching, tests]
     can_call_tools: false
 
   coder_strong:
-    gguf: qwen25_coder_7b
+    gguf: qwen36_27b
     endpoint: "http://127.0.0.1:8003/v1/chat/completions"
     temperature: 0.15
     max_tokens: 4000
-    context_window: 8192
+    context_window: 8192          # dense 27B is the slowest; keep context lean
     capabilities: [architecture, coding, refactoring, code_review]
     can_call_tools: false
 
   reasoning_critic:
-    # reuses the supervisor gguf -> no extra download, no reload if supervisor
-    # was the previous role on the same port.
-    gguf: qwen25_7b_instruct
-    endpoint: "http://127.0.0.1:8001/v1/chat/completions"
-    temperature: 0.25
-    max_tokens: 3000
+    gguf: deepseek_r1_qwen3_8b
+    endpoint: "http://127.0.0.1:8004/v1/chat/completions"
+    temperature: 0.3              # R1 distill reasons via long chain-of-thought
+    max_tokens: 6000              # leave room for thinking tokens
     context_window: 8192
     capabilities: [critique, reasoning, edge_case_analysis]
     can_call_tools: false
 
   contrarian_critic:
-    # same weights as supervisor, hotter temperature for a different angle.
-    gguf: qwen25_7b_instruct
-    endpoint: "http://127.0.0.1:8001/v1/chat/completions"
-    temperature: 0.45
-    max_tokens: 2500
+    gguf: qwen3_8b_abliterated
+    endpoint: "http://127.0.0.1:8005/v1/chat/completions"
+    temperature: 0.5             # low-refusal model for harsh second opinions
+    max_tokens: 3000
     context_window: 8192
-    capabilities: [adversarial_review, alternative_reasoning]
-    can_call_tools: false
-
-  summarizer:
-    gguf: qwen25_3b_instruct
-    endpoint: "http://127.0.0.1:8007/v1/chat/completions"
-    temperature: 0.1
-    max_tokens: 1500
-    context_window: 4096
-    capabilities: [summarization, compression, classification]
+    capabilities: [adversarial_review, alternative_reasoning, low_refusal]
     can_call_tools: false
 
   vision:
-    # Phase 6 - do not wire up yet.
-    gguf: qwen25_vl_7b
-    mmproj: qwen25_vl_7b_mmproj
+    # Optional: the supervisor/strong coder are already multimodal. Keep this
+    # for dedicated screen reads. Phase 6 - do not wire up yet.
+    gguf: qwen3_vl_8b
+    mmproj: qwen3_vl_8b_mmproj
     endpoint: "http://127.0.0.1:8006/v1/chat/completions"
     temperature: 0.1
     max_tokens: 2000

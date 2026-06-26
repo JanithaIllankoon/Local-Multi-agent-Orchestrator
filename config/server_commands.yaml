@@ -1,52 +1,63 @@
 # config/server_commands.yaml
 #
-# Commands the ModelServerManager uses to launch each role's llama-server.
-# Only needed once you leave single_endpoint_mode (Phase 2+).
+# llama-server launch commands per role. Used by ModelServerManager once you
+# leave single_endpoint_mode (Phase 2+). For Phase 0 just run the supervisor
+# command by hand.
 #
-# Notes for an 8-12GB GPU:
-#   -ngl 99   offload all layers to GPU; lower it (e.g. -ngl 20) if you OOM.
-#   -c 8192   context size; smaller context = less KV-cache VRAM.
-#   --jinja   use the model's built-in chat template (required for Qwen2.5).
-#   Roles that share a gguf+port (supervisor / critics) reuse one server.
+# 8GB VRAM + ~12GB usable RAM rules baked in here:
+#   --n-cpu-moe N : MoE only. Keep N experts' layers on CPU so VRAM holds the
+#                   active path + KV cache. Raise N if you OOM VRAM.
+#   -ngl 99       : offload all layers to GPU; lower it for dense models that
+#                   don't fit (the 27B will spill to CPU/disk regardless).
+#   -c            : context size. Smaller = less KV-cache VRAM. Keep it lean.
+#   mmap is ON by default (do NOT pass --no-mmap) so big models page from disk
+#   instead of OOM-crashing.
+#
+# RUN ONE AT A TIME. Never start two big servers simultaneously.
 
 servers:
+  # Supervisor + tool calling. MoE: active path on GPU, experts on CPU.
   supervisor:
     port: 8001
     command: >
       llama-server
-      -m "models/Qwen2.5-7B-Instruct-Q4_K_M.gguf"
+      -m "models/Qwen3-Coder-30B-A3B-Instruct-Q3_K_M.gguf"
       --host 127.0.0.1 --port 8001
-      --jinja -c 8192 -ngl 99
+      --jinja -c 8192 -ngl 99 --n-cpu-moe 24
 
-  coder_fast:
-    port: 8002
-    command: >
-      llama-server
-      -m "models/Qwen2.5-Coder-3B-Instruct-Q4_K_M.gguf"
-      --host 127.0.0.1 --port 8002
-      --jinja -c 8192 -ngl 99
-
+  # Strong coder: dense 27B. Heaviest model; will use CPU+disk. Slow by design.
   coder_strong:
     port: 8003
     command: >
       llama-server
-      -m "models/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf"
+      -m "models/Qwen3.6-27B-Q3_K_M.gguf"
       --host 127.0.0.1 --port 8003
-      --jinja -c 8192 -ngl 99
+      --jinja -c 8192 -ngl 35
 
-  summarizer:
-    port: 8007
+  # Reasoner: DeepSeek-R1 distill, fits fully on GPU.
+  reasoning_critic:
+    port: 8004
     command: >
       llama-server
-      -m "models/Qwen2.5-3B-Instruct-Q4_K_M.gguf"
-      --host 127.0.0.1 --port 8007
-      --jinja -c 4096 -ngl 99
+      -m "models/DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf"
+      --host 127.0.0.1 --port 8004
+      --jinja -c 8192 -ngl 99
 
+  # Uncensored / contrarian: 8B abliterated, fits fully on GPU.
+  contrarian_critic:
+    port: 8005
+    command: >
+      llama-server
+      -m "models/Qwen3-8B-abliterated-Q4_K_M.gguf"
+      --host 127.0.0.1 --port 8005
+      --jinja -c 8192 -ngl 99
+
+  # Vision (Phase 6): Qwen3-VL-8B-Thinking + mmproj.
   vision:
     port: 8006
     command: >
       llama-server
-      -m "models/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf"
-      --mmproj "models/Qwen2.5-VL-7B-Instruct-mmproj-f16.gguf"
+      -m "models/Qwen3-VL-8B-Thinking-Q4_K_M.gguf"
+      --mmproj "models/Qwen3-VL-8B-Thinking-mmproj-f16.gguf"
       --host 127.0.0.1 --port 8006
       -c 4096 -ngl 99
