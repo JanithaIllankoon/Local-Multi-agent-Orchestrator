@@ -1,9 +1,10 @@
 # Local model weights - never commit GGUFs (multi-GB)
-models/
+# leading slash = repo root only, so src/models/ is NOT ignored
+/models/
 *.gguf
 
 # Agent working dir
-workspace/
+/workspace/
 
 # Local DB / traces
 *.db
