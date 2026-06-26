@@ -103,16 +103,19 @@ its own. Only a deterministic, safety-gated Executor can — and only in later p
 - **Backend:** Python · FastAPI · Pydantic · httpx
 - **Storage:** SQLite
 - **Frontend:** lightweight web UI with a live trace panel
-- **Default models:** Qwen2.5 family (7B instruct, Coder 7B/3B) — fully configurable
+- **Default models:** Qwen3 family + DeepSeek-R1 distill (supervisor, two coders,
+  reasoner, uncensored critic, vision) — fully configurable per role
 
 ## Project status & roadmap
 
-🚧 **Early development.** The architecture and configuration are in place; the
-orchestration backend is being built next.
+🚧 **Early development, but it runs.** You can already chat with the orchestrator
+and watch the agents work in a live trace. Today everything runs on a single
+local model; per-role models land in Phase 2.
 
-- [ ] **Phase 0** — Backend skeleton + supervisor-only chat + basic UI
-- [ ] **Phase 1** — Full multi-agent coding pipeline + live trace
-- [ ] **Phase 2** — Session persistence + automatic local model swapping
+- [x] **Phase 0** — Backend + chat UI + live agent trace ✅
+- [~] **Phase 1** — Multi-agent coding pipeline (supervisor → 2 coders → critic).
+  *Done. Contrarian critic + Deep Review mode still to add.*
+- [ ] **Phase 2** — Session persistence + automatic local model swapping (each role its own model)
 - [ ] **Phase 3** — Filesystem tools (sandboxed workspace)
 - [ ] **Phase 4** — Shell execution + self-repair loop
 - [ ] **Phase 5** — Multi-file project mode
@@ -122,6 +125,25 @@ orchestration backend is being built next.
 
 > Design philosophy: get the **reasoning layer** rock-solid before adding any
 > ability to touch the system. No flashy desktop agent before the brain is reliable.
+
+## Run it locally
+
+You need [llama.cpp](https://github.com/ggml-org/llama.cpp) and at least one GGUF
+model. Then, from the project folder:
+
+```powershell
+# 1. Install Python deps
+pip install -r requirements.txt
+
+# 2. Start a local model on port 8001 (Windows helper script)
+powershell -ExecutionPolicy Bypass -File scripts/start_model.ps1 reasoner
+
+# 3. Start the web app
+python -m uvicorn src.main:app --port 8000
+```
+
+Then open **http://127.0.0.1:8000**, type a prompt, and pick a mode
+(Simple / Coding). The agent trace fills in live on the right.
 
 ## License
 
