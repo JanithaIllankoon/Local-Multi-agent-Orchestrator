@@ -1,129 +1,134 @@
-# Local Multi-Agent Orchestrator
+<div align="center">
 
-A local, privacy-preserving multi-agent system where you talk to **one**
-interface — the **Orchestrator** — and it internally coordinates several local
-LLMs (a supervisor, coders, critics, and later a vision model), aggregates their
-output, and returns a single polished answer.
+# 🧠 Local Multi-Agent Orchestrator
 
-Models run locally via [llama.cpp](https://github.com/ggml-org/llama.cpp)
-(`llama-server`) behind OpenAI-style `/v1/chat/completions` endpoints. Upgrading
-a model is a config edit, never a code change.
+**One chat box. A whole team of local AI models working behind it.**
 
-> Full design lives in [`Plan.txt`](Plan.txt). This README is the practical
-> getting-started guide.
+Talk to a single interface. Under the hood, a supervisor coordinates specialist
+models — coders, critics, and a vision agent — that plan, build, review, and
+refine before you get one polished answer. Everything runs **100% locally** via
+[llama.cpp](https://github.com/ggml-org/llama.cpp). No cloud. No API keys. Your
+data never leaves your machine.
+
+![status](https://img.shields.io/badge/status-early%20development-orange)
+![runs](https://img.shields.io/badge/runs-100%25%20local-brightgreen)
+![backend](https://img.shields.io/badge/backend-llama.cpp-blue)
+![license](https://img.shields.io/badge/license-MIT-lightgrey)
+
+</div>
+
+---
+
+## What is this?
+
+Most local-LLM setups are a single model in a chat window. This project asks a
+different question: **what if a small team of local models collaborated like a
+real engineering team?**
+
+You type one request. Internally:
+
+- A **Supervisor** understands it, makes a plan, and delegates.
+- A **Fast Coder** drafts an implementation quickly.
+- A **Strong Coder** reviews and hardens it.
+- A **Reasoning Critic** hunts for flaws and edge cases.
+- A **Contrarian Critic** challenges the whole approach.
+- A **Vision Observer** (later) can look at your screen.
+- The Supervisor **synthesizes** everything into one clean reply.
+
+You never talk to the specialists directly. You just get a better answer — and a
+visible **trace** of how the team got there.
+
+## Why it's different
+
+| | |
+|---|---|
+| 🔒 **Fully local & private** | Runs on your own GPU via llama.cpp. Nothing is sent anywhere. |
+| 🧩 **Multi-agent, not single-model** | Plan → draft → review → critique → synthesize, like a real team. |
+| 🔭 **Glass-box, not black-box** | A trace panel shows every agent's step. Debuggable by design. |
+| 🛡️ **Safety outside the models** | Models can only *suggest*. A separate gated Executor is the only thing that ever touches files, shell, or GUI. |
+| ⚙️ **Swap models via config** | Upgrade any model by editing one YAML file — no code changes. |
+| 💻 **Built for modest hardware** | Designed to run on a single 8–12GB GPU, sharing weights across roles. |
 
 ## Core principle
 
-Separate **thinking**, **suggesting**, and **acting**:
+> Separate **thinking**, **suggesting**, and **acting**.
 
 ```
-User talks to Orchestrator.
-Orchestrator talks to agents.
+User talks to the Orchestrator.
+The Orchestrator talks to the agents.
 Agents suggest.
-Supervisor decides.
-Executor acts (later phases).
-UI displays result + trace.
+The Supervisor decides.
+The Executor acts.
+The UI shows the result — and the full trace.
 ```
 
-No specialist model ever touches the filesystem, shell, or GUI directly — only a
-safety-gated Executor does, and that comes in later phases.
+No specialist model ever writes a file, runs a command, or clicks the screen on
+its own. Only a deterministic, safety-gated Executor can — and only in later phases.
 
-## Hardware target & the memory reality
-
-Built around a **single 8–12GB NVIDIA GPU**. You **cannot** keep all roles
-resident at once. Two coping strategies, both supported by design:
-
-- **Phase 0 (now):** one `llama-server`, one model, every role behind a
-  different system prompt. `single_endpoint_mode: true` in
-  [`config/models.yaml`](config/models.yaml) makes every role resolve to one
-  endpoint. Build the whole orchestration loop on this first.
-- **Phase 2+:** a `ModelServerManager` lazily starts/stops per-role servers.
-  Several roles **share a GGUF** (the two critics reuse the supervisor model) so
-  swaps are cheap — only ~3 real model downloads back all 7 roles.
-
-### Suggested models (all Qwen2.5, Q4_K_M GGUF)
-
-| Role | Model | Notes |
-|------|-------|-------|
-| supervisor | Qwen2.5-7B-Instruct | planning + JSON |
-| coder_fast | Qwen2.5-Coder-3B | quick patches |
-| coder_strong | Qwen2.5-Coder-7B | harder coding/review |
-| reasoning_critic | *(reuses supervisor GGUF)* | no extra download |
-| contrarian_critic | *(reuses supervisor GGUF, hotter temp)* | — |
-| summarizer | Qwen2.5-3B-Instruct | cheap/fast |
-| vision | Qwen2.5-VL-7B + mmproj | **deferred to Phase 6** |
-
-Staying within one model family keeps the chat template and JSON behavior
-consistent.
-
-## Getting started
-
-### 1. Install llama.cpp
-
-Download a prebuilt **CUDA** `llama-server` release from
-[llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases) (no need to
-compile). Put it on your `PATH`.
-
-### 2. Get one model
-
-Download `Qwen2.5-7B-Instruct-Q4_K_M.gguf` into `models/` (the `models/` and
-`workspace/` dirs are git-ignored). Start with **one** model — do not download
-all of them yet.
-
-### 3. Start the server
-
-```powershell
-llama-server -m "models/Qwen2.5-7B-Instruct-Q4_K_M.gguf" `
-  --host 127.0.0.1 --port 8001 --jinja -c 8192 -ngl 99
-```
-
-If you hit out-of-memory, lower `-ngl` (e.g. `-ngl 20`) or `-c` (e.g. `-c 4096`).
-
-### 4. Smoke test (do this before writing app code)
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/smoke_test.ps1
-```
-
-Expect `OK - model replied: hello orchestrator`. If this fails, fix it before
-anything else — the entire project is Python over this HTTP endpoint.
-
-### 5. Backend (Phase 0, once it exists)
-
-```powershell
-pip install fastapi uvicorn pydantic httpx pyyaml aiosqlite rich
-uvicorn src.main:app --reload
-```
-
-## Project layout
+## How it works
 
 ```
-config/
-  models.yaml            # role -> model/endpoint registry (the swap point)
-  server_commands.yaml   # llama-server launch commands per role (Phase 2+)
-scripts/
-  smoke_test.ps1         # verify llama-server before building
-src/
-  models/model_client.py # call_model(role=...) - the one model seam (sketch)
-  core/orchestrator.py   # the task controller / mode pipelines (sketch)
-Plan.txt                 # full architecture & phased plan
+            You
+             │
+        ┌────▼─────┐
+        │  Web UI  │  chat + live agent trace
+        └────┬─────┘
+             │
+      ┌──────▼───────┐
+      │ Orchestrator │  the task controller
+      └──────┬───────┘
+             │
+      ┌──────▼───────┐
+      │  Supervisor  │  plans & delegates
+      └──────┬───────┘
+   ┌─────────┼──────────┬───────────┬────────────┐
+   ▼         ▼          ▼           ▼            ▼
+ Fast      Strong   Reasoning   Contrarian    Vision
+ Coder     Coder     Critic       Critic     Observer
+   └─────────┴──────────┴───────────┴────────────┘
+             │
+      ┌──────▼───────┐
+      │  Supervisor  │  synthesizes the final answer
+      └──────┬───────┘
+             │
+   ┌─────────▼──────────┐
+   │ Safety-Gated       │  (later phases) files · shell · screen
+   │ Executor → Tools   │
+   └────────────────────┘
 ```
 
-> `src/*.py` are currently **interface sketches** (signatures + docstrings, not
-> implementations). They define the contracts to build against next.
+## Tech stack
 
-## Build order
+- **Models:** local GGUF models served by `llama-server` (llama.cpp), OpenAI-compatible API
+- **Backend:** Python · FastAPI · Pydantic · httpx
+- **Storage:** SQLite
+- **Frontend:** lightweight web UI with a live trace panel
+- **Default models:** Qwen2.5 family (7B instruct, Coder 7B/3B) — fully configurable
 
-1. **Phase 0** — FastAPI skeleton, model client, supervisor-only chat, basic UI + trace.
-2. **Phase 1** — fast/strong coders + reasoning critic, coding-mode pipeline, streaming trace.
-3. **Phase 2** — SQLite persistence; `ModelServerManager` + real per-role models.
-4. **Phase 3+** — filesystem tools, shell tools, repair loop, then (much later) vision & GUI.
+## Project status & roadmap
 
-Do **not** build GUI control first. Get the text orchestrator genuinely reliable
-before adding any tools.
+🚧 **Early development.** The architecture and configuration are in place; the
+orchestration backend is being built next.
 
-### First milestone
+- [ ] **Phase 0** — Backend skeleton + supervisor-only chat + basic UI
+- [ ] **Phase 1** — Full multi-agent coding pipeline + live trace
+- [ ] **Phase 2** — Session persistence + automatic local model swapping
+- [ ] **Phase 3** — Filesystem tools (sandboxed workspace)
+- [ ] **Phase 4** — Shell execution + self-repair loop
+- [ ] **Phase 5** — Multi-file project mode
+- [ ] **Phase 6** — Vision: understand screenshots
+- [ ] **Phase 7** — GUI control (one safe action at a time)
+- [ ] **Phase 8** — Evaluation & benchmarks
 
-Type *"write a Python calculator"*, watch supervisor → fast coder → strong coder
-→ critic → final stream into the trace panel, get a clean answer — all on one
-local Qwen2.5-7B via llama.cpp.
+> Design philosophy: get the **reasoning layer** rock-solid before adding any
+> ability to touch the system. No flashy desktop agent before the brain is reliable.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+---
+
+<div align="center">
+<sub>Built for people who want their own private AI team, running entirely on their own hardware.</sub>
+</div>
