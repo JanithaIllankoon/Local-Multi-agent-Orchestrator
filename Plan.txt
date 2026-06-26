@@ -1,0 +1,2424 @@
+# Local Multi-Agent Orchestrator Implementation Plan
+
+## 1. Project Goal
+
+Build a local multi-agent orchestration system where the user interacts with only one interface: the **Orchestrator**.
+
+The Orchestrator should internally manage multiple local LLM/VLM agents, delegate subtasks to them sequentially, aggregate their outputs, decide what actions to take, and return a single polished response to the user.
+
+The system must be designed so that future hardware upgrades require only changing the model configuration, not rewriting the architecture.
+
+The system should support:
+
+* Local model backends through llama.cpp or compatible OpenAI-style HTTP endpoints.
+* A supervisor model for planning and final decisions.
+* Two coding models for implementation and review.
+* A reasoning critic model.
+* An optional contrarian or low-refusal critic model.
+* A vision model for screenshots and GUI understanding.
+* A deterministic tool executor for filesystem, shell, screenshot, and GUI control.
+* A web-based UI for interacting only with the Orchestrator.
+* Agent trace visibility for debugging.
+* Safety gates outside the model layer.
+* Model swapping through config files.
+
+The user should never need to directly talk to specialist models.
+
+---
+
+## 2. Core Design Principle
+
+The architecture must separate **thinking**, **suggesting**, and **acting**.
+
+Models are allowed to reason and suggest.
+
+Only the Orchestrator can approve a next step.
+
+Only the Executor can call tools.
+
+No specialist model should directly write files, run shell commands, click the GUI, or modify the system.
+
+The rule is:
+
+```text
+User talks to Orchestrator.
+Orchestrator talks to agents.
+Agents suggest.
+Supervisor decides.
+Executor acts.
+UI displays result and trace.
+```
+
+---
+
+## 3. High-Level Architecture
+
+```text
+User
+ ↓
+Web UI / Desktop UI
+ ↓
+Orchestrator API
+ ↓
+Session Manager
+ ↓
+Supervisor Agent
+ ↓
+Task Router
+ ↓
+Specialist Agents
+   ├── Fast Coder Agent
+   ├── Strong Coder Agent
+   ├── Reasoning Critic Agent
+   ├── Contrarian Critic Agent
+   ├── Vision Observer Agent
+   └── Summarizer / Context Agent
+ ↓
+Supervisor Final Decision
+ ↓
+Safety-Gated Executor
+ ↓
+Tools
+   ├── Filesystem Tools
+   ├── Shell Tools
+   ├── Screenshot Tools
+   ├── GUI Control Tools
+   ├── OCR / UI Metadata Tools
+   └── Browser Tools
+ ↓
+Observation Returned to Orchestrator
+ ↓
+Final Response to User
+```
+
+---
+
+## 4. Model Roles
+
+Use placeholders only. The actual model names should be configured later.
+
+### 4.1 Supervisor Model
+
+Placeholder:
+
+```text
+<SUPERVISOR_MODEL>
+```
+
+Responsibilities:
+
+* Understand the user request.
+* Create an execution plan.
+* Decide which specialist agents are needed.
+* Decide whether tool use is needed.
+* Approve or reject specialist outputs.
+* Produce the final answer.
+* Maintain task state.
+* Avoid directly executing tools.
+
+The supervisor is the central decision-maker.
+
+---
+
+### 4.2 Fast Coding Model
+
+Placeholder:
+
+```text
+<CODER_FAST_MODEL>
+```
+
+Responsibilities:
+
+* Write quick implementations.
+* Produce small patches.
+* Fix obvious bugs.
+* Generate tests.
+* Explain simple code changes.
+* Work quickly during retry loops.
+
+The fast coder should be used when the system needs speed over deep architecture.
+
+---
+
+### 4.3 Strong Coding Model
+
+Placeholder:
+
+```text
+<CODER_STRONG_MODEL>
+```
+
+Responsibilities:
+
+* Design architecture.
+* Review multi-file code.
+* Refactor messy code.
+* Solve harder coding tasks.
+* Compare alternative implementations.
+* Produce cleaner long-term solutions.
+
+The strong coder should be used for project structure, deeper reasoning, and quality improvements.
+
+---
+
+### 4.4 Reasoning Critic Model
+
+Placeholder:
+
+```text
+<REASONING_CRITIC_MODEL>
+```
+
+Responsibilities:
+
+* Attack weak reasoning.
+* Find hidden assumptions.
+* Check whether a plan is incomplete.
+* Identify edge cases.
+* Find logical flaws in code or task plans.
+* Challenge the supervisor before final execution.
+
+The reasoning critic should never execute tools.
+
+---
+
+### 4.5 Contrarian Critic Model
+
+Placeholder:
+
+```text
+<CONTRARIAN_CRITIC_MODEL>
+```
+
+Responsibilities:
+
+* Provide harsh second opinions.
+* Challenge overly cautious or overcomplicated plans.
+* Suggest alternative paths.
+* Identify failure modes.
+* Review assumptions from a different angle.
+
+Restrictions:
+
+* No tool access.
+* No final authority.
+* No shell access.
+* No GUI access.
+* No filesystem write access.
+
+This agent exists only to improve reasoning quality.
+
+---
+
+### 4.6 Vision Observer Model
+
+Placeholder:
+
+```text
+<VISION_MODEL>
+```
+
+Responsibilities:
+
+* Analyze screenshots.
+* Describe visible windows.
+* Identify UI elements.
+* Return approximate coordinates or bounding boxes.
+* Read visible labels where possible.
+* Summarize GUI state for the supervisor.
+
+The vision model must not directly control the mouse or keyboard.
+
+It should only return structured observations.
+
+---
+
+### 4.7 Summarizer / Context Model
+
+Placeholder:
+
+```text
+<SUMMARIZER_MODEL>
+```
+
+Responsibilities:
+
+* Compress long traces.
+* Summarize previous steps.
+* Maintain short context snapshots.
+* Reduce prompt size for the supervisor.
+* Classify task type.
+
+This model should be cheap and fast.
+
+---
+
+## 5. Model Registry
+
+All model choices must live in a config file, not inside Python code.
+
+Example file:
+
+```yaml
+# config/models.yaml
+
+backend_defaults:
+  provider: "openai_compatible"
+  timeout_seconds: 300
+  max_retries: 2
+
+roles:
+  supervisor:
+    model_id: "<SUPERVISOR_MODEL>"
+    endpoint: "http://127.0.0.1:8001/v1/chat/completions"
+    temperature: 0.2
+    max_tokens: 3000
+    context_window: 8192
+    capabilities:
+      - planning
+      - reasoning
+      - delegation
+      - final_response
+    can_call_tools: false
+
+  coder_fast:
+    model_id: "<CODER_FAST_MODEL>"
+    endpoint: "http://127.0.0.1:8002/v1/chat/completions"
+    temperature: 0.15
+    max_tokens: 3000
+    context_window: 8192
+    capabilities:
+      - coding
+      - patching
+      - tests
+    can_call_tools: false
+
+  coder_strong:
+    model_id: "<CODER_STRONG_MODEL>"
+    endpoint: "http://127.0.0.1:8003/v1/chat/completions"
+    temperature: 0.15
+    max_tokens: 4000
+    context_window: 8192
+    capabilities:
+      - architecture
+      - coding
+      - refactoring
+      - code_review
+    can_call_tools: false
+
+  reasoning_critic:
+    model_id: "<REASONING_CRITIC_MODEL>"
+    endpoint: "http://127.0.0.1:8004/v1/chat/completions"
+    temperature: 0.25
+    max_tokens: 3000
+    context_window: 8192
+    capabilities:
+      - critique
+      - reasoning
+      - edge_case_analysis
+    can_call_tools: false
+
+  contrarian_critic:
+    model_id: "<CONTRARIAN_CRITIC_MODEL>"
+    endpoint: "http://127.0.0.1:8005/v1/chat/completions"
+    temperature: 0.35
+    max_tokens: 2500
+    context_window: 8192
+    capabilities:
+      - adversarial_review
+      - alternative_reasoning
+    can_call_tools: false
+
+  vision:
+    model_id: "<VISION_MODEL>"
+    endpoint: "http://127.0.0.1:8006/v1/chat/completions"
+    temperature: 0.1
+    max_tokens: 2000
+    context_window: 4096
+    capabilities:
+      - vision
+      - screenshot_understanding
+      - gui_observation
+    can_call_tools: false
+
+  summarizer:
+    model_id: "<SUMMARIZER_MODEL>"
+    endpoint: "http://127.0.0.1:8007/v1/chat/completions"
+    temperature: 0.1
+    max_tokens: 1500
+    context_window: 4096
+    capabilities:
+      - summarization
+      - compression
+      - classification
+    can_call_tools: false
+```
+
+The rest of the code should refer to roles, not model names.
+
+Correct:
+
+```python
+call_model(role="supervisor", messages=messages)
+```
+
+Incorrect:
+
+```python
+call_specific_model_name(messages)
+```
+
+---
+
+## 6. Model Server Manager
+
+Create a model server manager that can start, stop, restart, and check local model servers.
+
+The system must support two operating modes.
+
+### 6.1 Always-On Mode
+
+Use when hardware is powerful enough.
+
+```text
+All required model servers are started once and kept running.
+```
+
+### 6.2 Lazy Sequential Mode
+
+Use on limited hardware.
+
+```text
+Only the needed model is started.
+The orchestrator calls it.
+Then it is stopped or left idle.
+The next model is started when needed.
+```
+
+Since the system is intended to run sequentially, the initial version should support lazy sequential execution.
+
+Server manager interface:
+
+```python
+class ModelServerManager:
+    def start_role(self, role: str) -> None:
+        pass
+
+    def stop_role(self, role: str) -> None:
+        pass
+
+    def restart_role(self, role: str) -> None:
+        pass
+
+    def is_role_alive(self, role: str) -> bool:
+        pass
+
+    def ensure_role_ready(self, role: str) -> None:
+        pass
+```
+
+Optional model server config:
+
+```yaml
+# config/server_commands.yaml
+
+servers:
+  supervisor:
+    command: >
+      llama-server
+      -m "<PATH_TO_SUPERVISOR_MODEL>"
+      --port 8001
+      --host 127.0.0.1
+      --jinja
+      -c 8192
+      -ngl 99
+
+  coder_fast:
+    command: >
+      llama-server
+      -m "<PATH_TO_CODER_FAST_MODEL>"
+      --port 8002
+      --host 127.0.0.1
+      --jinja
+      -c 8192
+      -ngl 99
+
+  coder_strong:
+    command: >
+      llama-server
+      -m "<PATH_TO_CODER_STRONG_MODEL>"
+      --port 8003
+      --host 127.0.0.1
+      --jinja
+      -c 8192
+      -ngl 99
+
+  reasoning_critic:
+    command: >
+      llama-server
+      -m "<PATH_TO_REASONING_CRITIC_MODEL>"
+      --port 8004
+      --host 127.0.0.1
+      --jinja
+      -c 8192
+      -ngl 99
+
+  contrarian_critic:
+    command: >
+      llama-server
+      -m "<PATH_TO_CONTRARIAN_CRITIC_MODEL>"
+      --port 8005
+      --host 127.0.0.1
+      --jinja
+      -c 8192
+      -ngl 99
+
+  vision:
+    command: >
+      llama-server
+      -m "<PATH_TO_VISION_MODEL>"
+      --mmproj "<PATH_TO_VISION_PROJECTOR>"
+      --port 8006
+      --host 127.0.0.1
+      -c 4096
+      -ngl 99
+
+  summarizer:
+    command: >
+      llama-server
+      -m "<PATH_TO_SUMMARIZER_MODEL>"
+      --port 8007
+      --host 127.0.0.1
+      --jinja
+      -c 4096
+      -ngl 99
+```
+
+---
+
+## 7. Core Backend Stack
+
+Use:
+
+```text
+Python
+FastAPI
+Pydantic
+httpx
+PyYAML
+SQLite
+```
+
+Suggested install:
+
+```bash
+pip install fastapi uvicorn pydantic httpx pyyaml aiosqlite rich
+```
+
+Later tool additions:
+
+```bash
+pip install pyautogui mss pillow pyperclip pywinauto
+```
+
+Optional OCR later:
+
+```bash
+pip install pytesseract
+```
+
+---
+
+## 8. Recommended Repository Structure
+
+```text
+local-agent-orchestrator/
+  README.md
+  requirements.txt
+  .gitignore
+
+  config/
+    models.yaml
+    server_commands.yaml
+    tools.yaml
+    safety.yaml
+    ui.yaml
+
+  src/
+    main.py
+
+    core/
+      orchestrator.py
+      session.py
+      task_graph.py
+      router.py
+      context_manager.py
+      trace.py
+      events.py
+
+    models/
+      model_client.py
+      model_registry.py
+      server_manager.py
+      prompt_templates.py
+
+    agents/
+      base_agent.py
+      supervisor_agent.py
+      coder_fast_agent.py
+      coder_strong_agent.py
+      reasoning_critic_agent.py
+      contrarian_critic_agent.py
+      vision_agent.py
+      summarizer_agent.py
+
+    tools/
+      base_tool.py
+      registry.py
+      filesystem_tools.py
+      shell_tools.py
+      screenshot_tools.py
+      gui_tools.py
+      window_tools.py
+      clipboard_tools.py
+      browser_tools.py
+
+    executor/
+      executor.py
+      tool_call_parser.py
+      permissions.py
+      sandbox.py
+      validation.py
+
+    safety/
+      policy.py
+      command_filter.py
+      path_filter.py
+      confirmation.py
+
+    storage/
+      database.py
+      repositories.py
+      migrations.py
+
+    schemas/
+      api.py
+      messages.py
+      tools.py
+      tasks.py
+
+  web/
+    index.html
+    styles.css
+    app.js
+
+  docs/
+    architecture.md
+    orchestration_loop.md
+    model_swapping.md
+    tool_protocol.md
+    safety_model.md
+    gui_control.md
+    roadmap.md
+
+  workspace/
+    .gitkeep
+
+  evals/
+    benchmark_tasks.yaml
+    benchmark_runner.py
+    results/
+```
+
+---
+
+## 9. Orchestrator Responsibilities
+
+The Orchestrator is the main backend service.
+
+It should:
+
+1. Receive the user request.
+2. Create or resume a session.
+3. Send the request to the supervisor.
+4. Ask the supervisor for a structured plan.
+5. Route subtasks to specialist agents.
+6. Collect specialist outputs.
+7. Ask critics to review when needed.
+8. Ask supervisor to decide next step.
+9. Execute approved tool calls through Executor.
+10. Return observations to supervisor.
+11. Continue until task is complete.
+12. Return final answer to the user.
+13. Save trace, messages, tool calls, and results.
+
+The Orchestrator should not be a simple chatbot wrapper. It should be a task controller.
+
+---
+
+## 10. Task Types
+
+The router should classify user requests into one or more task types.
+
+Possible task types:
+
+```text
+general_chat
+coding
+code_review
+debugging
+filesystem_task
+shell_task
+research_task
+gui_task
+vision_task
+browser_task
+planning_task
+multi_step_project
+```
+
+Initial implementation should support:
+
+```text
+general_chat
+coding
+code_review
+debugging
+planning_task
+```
+
+Later implementation should support:
+
+```text
+filesystem_task
+shell_task
+vision_task
+gui_task
+browser_task
+```
+
+---
+
+## 11. Orchestration Modes
+
+Implement several orchestration modes.
+
+### 11.1 Simple Mode
+
+Use only supervisor.
+
+```text
+User → Supervisor → Final Answer
+```
+
+Use for simple questions.
+
+---
+
+### 11.2 Coding Mode
+
+Use supervisor, two coders, critic, and final supervisor.
+
+```text
+User
+ ↓
+Supervisor creates plan
+ ↓
+Fast coder creates implementation
+ ↓
+Strong coder reviews/improves
+ ↓
+Reasoning critic finds flaws
+ ↓
+Supervisor synthesizes final answer
+```
+
+Use for coding tasks.
+
+---
+
+### 11.3 Deep Review Mode
+
+Use all non-vision agents.
+
+```text
+User
+ ↓
+Supervisor plan
+ ↓
+Fast coder
+ ↓
+Strong coder
+ ↓
+Reasoning critic
+ ↓
+Contrarian critic
+ ↓
+Supervisor final decision
+```
+
+Use for complex tasks or when user asks for high reliability.
+
+---
+
+### 11.4 Tool Execution Mode
+
+Use supervisor and executor.
+
+```text
+User
+ ↓
+Supervisor plan
+ ↓
+Specialist agents if needed
+ ↓
+Supervisor proposes tool call
+ ↓
+Safety validator approves/rejects
+ ↓
+Executor runs tool
+ ↓
+Observation returns
+ ↓
+Supervisor decides next step
+```
+
+Use for file writing, shell commands, and later GUI control.
+
+---
+
+### 11.5 GUI Vision Mode
+
+Use screenshot tool, vision agent, supervisor, and GUI executor.
+
+```text
+User task
+ ↓
+Screenshot
+ ↓
+Vision model describes screen
+ ↓
+Supervisor decides one next action
+ ↓
+Safety validator checks action
+ ↓
+Executor performs one action
+ ↓
+Screenshot again
+ ↓
+Repeat until complete
+```
+
+Important rule:
+
+```text
+Only one GUI action per loop.
+Always observe after acting.
+```
+
+---
+
+## 12. Task Graph
+
+Represent every complex task as a task graph.
+
+Example schema:
+
+```json
+{
+  "task_id": "task_001",
+  "goal": "Create a Python script and test it",
+  "status": "running",
+  "steps": [
+    {
+      "id": "understand_request",
+      "agent": "supervisor",
+      "status": "done",
+      "output_ref": "trace_001"
+    },
+    {
+      "id": "write_code",
+      "agent": "coder_fast",
+      "status": "running",
+      "output_ref": null
+    },
+    {
+      "id": "review_code",
+      "agent": "coder_strong",
+      "status": "pending",
+      "output_ref": null
+    },
+    {
+      "id": "critique",
+      "agent": "reasoning_critic",
+      "status": "pending",
+      "output_ref": null
+    },
+    {
+      "id": "finalize",
+      "agent": "supervisor",
+      "status": "pending",
+      "output_ref": null
+    }
+  ]
+}
+```
+
+Task step statuses:
+
+```text
+pending
+running
+blocked
+done
+failed
+skipped
+requires_user_confirmation
+```
+
+---
+
+## 13. Agent Output Format
+
+Require agents to return structured JSON where possible.
+
+For supervisor planning:
+
+```json
+{
+  "task_type": "coding",
+  "goal": "Create a working Python script",
+  "needs_tools": false,
+  "needs_vision": false,
+  "needs_coding_agents": true,
+  "needs_critics": true,
+  "plan": [
+    "Clarify required behavior",
+    "Ask fast coder for initial implementation",
+    "Ask strong coder for review",
+    "Ask critic for edge cases",
+    "Produce final answer"
+  ],
+  "delegations": [
+    {
+      "role": "coder_fast",
+      "instruction": "Create the first implementation."
+    },
+    {
+      "role": "coder_strong",
+      "instruction": "Review and improve the implementation."
+    },
+    {
+      "role": "reasoning_critic",
+      "instruction": "Find flaws and edge cases."
+    }
+  ]
+}
+```
+
+For coding agents:
+
+```json
+{
+  "summary": "Implemented requested feature.",
+  "files": [
+    {
+      "path": "workspace/example.py",
+      "language": "python",
+      "content": "<CODE_CONTENT>"
+    }
+  ],
+  "commands_to_test": [
+    "python workspace/example.py"
+  ],
+  "notes": [
+    "No external dependencies required."
+  ]
+}
+```
+
+For critics:
+
+```json
+{
+  "verdict": "needs_revision",
+  "issues": [
+    {
+      "severity": "high",
+      "description": "The script does not validate empty input.",
+      "suggested_fix": "Add input validation."
+    }
+  ],
+  "edge_cases": [
+    "Empty input",
+    "Invalid number",
+    "Large input"
+  ]
+}
+```
+
+For vision agent:
+
+```json
+{
+  "screen_summary": "A blank Notepad window is open.",
+  "active_window": "Notepad",
+  "visible_elements": [
+    {
+      "label": "text editing area",
+      "type": "text_area",
+      "bounds": [100, 150, 900, 700],
+      "confidence": 0.87
+    }
+  ],
+  "recommended_next_observation": "The user can type into the main text area."
+}
+```
+
+For tool calls:
+
+```json
+{
+  "tool_name": "write_file",
+  "arguments": {
+    "path": "workspace/example.py",
+    "content": "<CODE_CONTENT>"
+  },
+  "reason": "Write generated Python script to workspace."
+}
+```
+
+For tool observations:
+
+```json
+{
+  "tool_name": "write_file",
+  "success": true,
+  "output": "File written successfully.",
+  "error": null
+}
+```
+
+---
+
+## 14. Tool System
+
+The tool system must be deterministic and controlled by the Executor.
+
+Every tool must have:
+
+```text
+name
+description
+input_schema
+permission_level
+validator
+execution_function
+result_schema
+```
+
+Base tool interface:
+
+```python
+from abc import ABC, abstractmethod
+from pydantic import BaseModel
+
+class ToolResult(BaseModel):
+    success: bool
+    output: str | None = None
+    error: str | None = None
+    data: dict | None = None
+
+class BaseTool(ABC):
+    name: str
+    description: str
+    permission_level: int
+
+    @abstractmethod
+    def validate(self, arguments: dict) -> None:
+        pass
+
+    @abstractmethod
+    def execute(self, arguments: dict) -> ToolResult:
+        pass
+```
+
+---
+
+## 15. Initial Tools
+
+### 15.1 Filesystem Tools
+
+Implement first:
+
+```text
+list_dir(path)
+read_file(path)
+write_file(path, content)
+append_file(path, content)
+delete_file(path)
+make_dir(path)
+file_exists(path)
+```
+
+Restrictions:
+
+* Initially only allow paths inside `/workspace`.
+* Block absolute paths unless explicitly approved.
+* Block writing outside the project workspace.
+* Block deleting directories in MVP.
+
+---
+
+### 15.2 Shell Tools
+
+Implement after filesystem tools:
+
+```text
+run_command(command, cwd, timeout)
+```
+
+Restrictions:
+
+* Default working directory must be `/workspace`.
+* Block destructive commands by default.
+* Block commands touching system directories.
+* Require confirmation for package installs.
+* Require confirmation for network commands.
+* Timeout every command.
+* Capture stdout, stderr, and exit code.
+
+---
+
+### 15.3 Screenshot Tools
+
+Implement later:
+
+```text
+take_screenshot()
+get_screen_size()
+```
+
+Return:
+
+```json
+{
+  "path": "workspace/screenshots/screen_001.png",
+  "width": 1920,
+  "height": 1080
+}
+```
+
+---
+
+### 15.4 GUI Tools
+
+Implement after screenshot and vision are stable:
+
+```text
+click(x, y)
+double_click(x, y)
+right_click(x, y)
+type_text(text)
+press_key(key)
+hotkey(keys)
+scroll(amount)
+wait(seconds)
+get_active_window()
+open_app(name)
+```
+
+Restrictions:
+
+* GUI tools should be disabled by default.
+* Enable only through UI toggle.
+* One action per loop.
+* Always screenshot after action.
+* Dangerous UI actions require user confirmation.
+
+---
+
+### 15.5 Clipboard Tools
+
+```text
+read_clipboard()
+write_clipboard(text)
+clear_clipboard()
+```
+
+Restrictions:
+
+* Clipboard read should be user-approved in privacy mode.
+* Clipboard write is allowed only after supervisor approval.
+
+---
+
+## 16. Safety System
+
+Safety should be implemented outside models.
+
+Create `config/safety.yaml`:
+
+```yaml
+safety:
+  default_mode: "safe"
+
+  permissions:
+    filesystem_read: true
+    filesystem_write_workspace: true
+    filesystem_write_outside_workspace: false
+    shell_read_only: true
+    shell_write_workspace: true
+    shell_network: false
+    shell_package_install: "confirm"
+    gui_control: false
+    browser_control: false
+    destructive_actions: "confirm"
+
+  blocked_paths:
+    - "C:/Windows"
+    - "C:/Program Files"
+    - "C:/Program Files (x86)"
+    - "C:/Users/<USER>/AppData"
+    - "/bin"
+    - "/etc"
+    - "/usr"
+    - "/System"
+    - "/Library"
+
+  blocked_command_patterns:
+    - "rm -rf"
+    - "del /s"
+    - "format"
+    - "shutdown"
+    - "reg delete"
+    - "diskpart"
+    - "powershell -enc"
+    - "curl * | sh"
+    - "wget * | sh"
+
+  confirmation_required:
+    - "delete_file"
+    - "run_command_with_network"
+    - "install_package"
+    - "gui_control"
+    - "write_outside_workspace"
+```
+
+Safety levels:
+
+```text
+Level 0: Chat only
+Level 1: Read files inside workspace
+Level 2: Write files inside workspace
+Level 3: Run safe shell commands inside workspace
+Level 4: GUI control
+Level 5: Destructive actions with explicit confirmation
+```
+
+The Executor must check every tool call against this policy.
+
+---
+
+## 17. API Design
+
+Backend should expose these endpoints.
+
+### 17.1 Chat Endpoint
+
+```http
+POST /api/chat
+```
+
+Request:
+
+```json
+{
+  "session_id": "optional_session_id",
+  "message": "Create a Python calculator script.",
+  "mode": "auto",
+  "show_trace": true
+}
+```
+
+Response:
+
+```json
+{
+  "session_id": "session_001",
+  "answer": "Final answer to user.",
+  "status": "complete",
+  "trace": [
+    {
+      "role": "supervisor",
+      "type": "plan",
+      "content": "..."
+    }
+  ]
+}
+```
+
+---
+
+### 17.2 Sessions
+
+```http
+GET /api/sessions
+GET /api/sessions/{session_id}
+DELETE /api/sessions/{session_id}
+```
+
+---
+
+### 17.3 Trace
+
+```http
+GET /api/sessions/{session_id}/trace
+```
+
+---
+
+### 17.4 Models
+
+```http
+GET /api/models
+GET /api/models/status
+POST /api/models/{role}/start
+POST /api/models/{role}/stop
+POST /api/models/{role}/restart
+```
+
+---
+
+### 17.5 Tools
+
+```http
+GET /api/tools
+GET /api/tools/status
+POST /api/tools/enable
+POST /api/tools/disable
+```
+
+---
+
+### 17.6 Confirmation
+
+When a tool requires confirmation:
+
+```http
+POST /api/confirm
+```
+
+Request:
+
+```json
+{
+  "session_id": "session_001",
+  "confirmation_id": "confirm_001",
+  "approved": true
+}
+```
+
+---
+
+## 18. UI Requirements
+
+Build a simple web UI first.
+
+The UI should have:
+
+### 18.1 Main Chat Panel
+
+* User prompt input.
+* Final orchestrator answer.
+* Session history.
+* Current status indicator.
+* Stop button.
+* Mode selector.
+
+Modes:
+
+```text
+Auto
+Simple
+Coding
+Deep Review
+Tool Execution
+GUI Vision
+```
+
+---
+
+### 18.2 Agent Trace Panel
+
+Show internal orchestration steps.
+
+Each trace card should show:
+
+```text
+timestamp
+agent role
+step type
+short summary
+expandable full content
+```
+
+Example roles:
+
+```text
+Supervisor Plan
+Fast Coder Output
+Strong Coder Review
+Reasoning Critic
+Contrarian Critic
+Tool Call
+Tool Result
+Supervisor Final
+```
+
+The trace panel is for debugging, not primary interaction.
+
+---
+
+### 18.3 Model Status Panel
+
+Show:
+
+```text
+role
+model placeholder/name from config
+endpoint
+status: online/offline/loading/error
+last latency
+last token usage if available
+```
+
+Buttons:
+
+```text
+Start
+Stop
+Restart
+Test
+```
+
+---
+
+### 18.4 Tool Permissions Panel
+
+Show toggles:
+
+```text
+Filesystem read
+Filesystem write
+Shell execution
+Network access
+GUI control
+Browser control
+Destructive actions
+```
+
+Dangerous toggles should clearly show confirmation warnings.
+
+---
+
+### 18.5 Workspace Panel
+
+Show files inside `/workspace`.
+
+Features:
+
+```text
+view file
+copy file contents
+download file
+delete file with confirmation
+refresh
+```
+
+---
+
+### 18.6 Run History Panel
+
+Show previous sessions:
+
+```text
+session title
+created time
+last updated
+status
+mode
+open session
+delete session
+```
+
+---
+
+## 19. UI Layout
+
+Initial layout:
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ Top Bar: Local Agent Orchestrator | Model Status | Settings │
+├───────────────────────────────┬─────────────────────────────┤
+│ Main Chat                     │ Agent Trace                 │
+│                               │                             │
+│ Final Answer                  │ Supervisor Plan             │
+│ User Input                    │ Coder Output                │
+│ Run Button                    │ Critic Output               │
+│                               │ Tool Calls                  │
+├───────────────────────────────┴─────────────────────────────┤
+│ Bottom: current task status / active model / elapsed time    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Use a dark technical interface.
+
+Suggested theme variables:
+
+```css
+:root {
+  --bg: #0E1A24;
+  --panel: #10212C;
+  --panel-deep: #081119;
+  --text: #E9F5F1;
+  --muted: #8EA4A0;
+  --accent: #1DCB97;
+  --border: rgba(255,255,255,0.12);
+  --danger: #FF5C5C;
+  --warning: #FFCA64;
+}
+```
+
+---
+
+## 20. Prompt Templates
+
+Keep prompts in dedicated files or constants.
+
+### 20.1 Supervisor System Prompt
+
+```text
+You are the Supervisor Agent in a local multi-agent orchestration system.
+
+The user only interacts with the Orchestrator, not with individual models.
+
+Your responsibilities:
+- Understand the user request.
+- Decide whether this is a simple, coding, review, tool, vision, or GUI task.
+- Create a clear plan.
+- Delegate subtasks to specialist agents.
+- Review specialist outputs.
+- Decide whether tool use is needed.
+- Never pretend that a tool was executed.
+- Only request tool execution through a structured tool request.
+- Produce a final answer for the user.
+
+You do not directly execute tools.
+You do not directly control the computer.
+You must be practical, concise, and reliable.
+```
+
+---
+
+### 20.2 Fast Coder Prompt
+
+```text
+You are the Fast Coding Agent.
+
+Your responsibilities:
+- Produce practical working code quickly.
+- Prefer simple, robust implementations.
+- Avoid unnecessary abstractions.
+- Include commands needed to test the code.
+- Return file paths and contents clearly when asked.
+- Do not claim code was executed.
+- Do not call tools.
+```
+
+---
+
+### 20.3 Strong Coder Prompt
+
+```text
+You are the Strong Coding Agent.
+
+Your responsibilities:
+- Review architecture.
+- Improve code quality.
+- Find design problems.
+- Refactor when needed.
+- Make code maintainable.
+- Suggest tests.
+- Do not call tools.
+- Do not claim code was executed.
+```
+
+---
+
+### 20.4 Reasoning Critic Prompt
+
+```text
+You are the Reasoning Critic Agent.
+
+Your responsibilities:
+- Find flaws in plans and code.
+- Identify missing requirements.
+- Identify edge cases.
+- Challenge assumptions.
+- Explain risks.
+- Recommend corrections.
+- Do not call tools.
+- Do not produce the final user answer.
+```
+
+---
+
+### 20.5 Contrarian Critic Prompt
+
+```text
+You are the Contrarian Critic Agent.
+
+Your responsibilities:
+- Give a harsh second opinion.
+- Challenge the dominant plan.
+- Suggest alternative approaches.
+- Identify overengineering.
+- Identify false assumptions.
+- You do not have tool access.
+- You do not have final authority.
+```
+
+---
+
+### 20.6 Vision Agent Prompt
+
+```text
+You are the Vision Observer Agent.
+
+Your responsibilities:
+- Analyze screenshots.
+- Describe visible UI state.
+- Identify windows, buttons, text fields, menus, and important elements.
+- Return structured observations.
+- If coordinates are needed, provide approximate bounding boxes.
+- Do not decide actions.
+- Do not control the mouse or keyboard.
+```
+
+---
+
+## 21. Orchestration Algorithms
+
+### 21.1 Auto Mode Algorithm
+
+```python
+async def handle_user_message(session_id, message):
+    session = get_or_create_session(session_id)
+
+    classification = await supervisor_classify(message)
+
+    if classification.task_type == "simple":
+        return await run_simple_mode(session, message)
+
+    if classification.task_type in ["coding", "debugging", "code_review"]:
+        return await run_coding_mode(session, message)
+
+    if classification.task_type == "planning":
+        return await run_deep_review_mode(session, message)
+
+    if classification.task_type in ["filesystem_task", "shell_task"]:
+        return await run_tool_execution_mode(session, message)
+
+    if classification.task_type in ["vision_task", "gui_task"]:
+        return await run_gui_vision_mode(session, message)
+
+    return await run_simple_mode(session, message)
+```
+
+---
+
+### 21.2 Coding Mode Algorithm
+
+```python
+async def run_coding_mode(session, user_message):
+    plan = await supervisor.create_plan(user_message)
+
+    fast_output = await coder_fast.run(
+        user_message=user_message,
+        supervisor_plan=plan
+    )
+
+    strong_output = await coder_strong.run(
+        user_message=user_message,
+        supervisor_plan=plan,
+        fast_output=fast_output
+    )
+
+    critic_output = await reasoning_critic.run(
+        user_message=user_message,
+        supervisor_plan=plan,
+        fast_output=fast_output,
+        strong_output=strong_output
+    )
+
+    final_answer = await supervisor.finalize(
+        user_message=user_message,
+        plan=plan,
+        specialist_outputs=[
+            fast_output,
+            strong_output,
+            critic_output
+        ]
+    )
+
+    save_trace(session)
+    return final_answer
+```
+
+---
+
+### 21.3 Deep Review Mode Algorithm
+
+```python
+async def run_deep_review_mode(session, user_message):
+    plan = await supervisor.create_plan(user_message)
+
+    fast_output = await coder_fast.run(user_message, plan)
+    strong_output = await coder_strong.run(user_message, plan, fast_output)
+    critic_output = await reasoning_critic.run(user_message, plan, strong_output)
+    contrarian_output = await contrarian_critic.run(
+        user_message,
+        plan,
+        fast_output,
+        strong_output,
+        critic_output
+    )
+
+    final_answer = await supervisor.finalize(
+        user_message=user_message,
+        plan=plan,
+        specialist_outputs=[
+            fast_output,
+            strong_output,
+            critic_output,
+            contrarian_output
+        ]
+    )
+
+    return final_answer
+```
+
+---
+
+### 21.4 Tool Execution Algorithm
+
+```python
+async def run_tool_execution_mode(session, user_message):
+    plan = await supervisor.create_plan(user_message)
+
+    while not task_complete:
+        next_step = await supervisor.decide_next_step(
+            user_message=user_message,
+            current_plan=plan,
+            previous_observations=session.observations
+        )
+
+        if next_step.type == "final":
+            return next_step.answer
+
+        if next_step.type == "tool_call":
+            validation = safety_validator.validate(next_step.tool_call)
+
+            if validation.requires_confirmation:
+                return create_confirmation_request(validation)
+
+            if not validation.allowed:
+                observation = {
+                    "success": False,
+                    "error": validation.reason
+                }
+            else:
+                observation = executor.execute(next_step.tool_call)
+
+            session.observations.append(observation)
+            continue
+```
+
+---
+
+### 21.5 GUI Vision Algorithm
+
+```python
+async def run_gui_vision_mode(session, user_message):
+    while not task_complete:
+        screenshot = screenshot_tool.execute({})
+
+        vision_observation = await vision_agent.observe(
+            image_path=screenshot.path,
+            user_goal=user_message
+        )
+
+        next_action = await supervisor.decide_gui_action(
+            user_goal=user_message,
+            vision_observation=vision_observation,
+            previous_actions=session.actions
+        )
+
+        if next_action.type == "final":
+            return next_action.answer
+
+        validation = safety_validator.validate(next_action)
+
+        if validation.requires_confirmation:
+            return create_confirmation_request(validation)
+
+        if validation.allowed:
+            result = executor.execute(next_action)
+        else:
+            result = {
+                "success": False,
+                "error": validation.reason
+            }
+
+        session.actions.append(next_action)
+        session.observations.append(result)
+```
+
+Important:
+
+```text
+Never allow multiple GUI actions in a single model response.
+Always screenshot after each GUI action.
+```
+
+---
+
+## 22. Storage
+
+Use SQLite.
+
+Tables:
+
+```sql
+CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,
+    title TEXT,
+    created_at TEXT,
+    updated_at TEXT,
+    status TEXT,
+    mode TEXT
+);
+
+CREATE TABLE messages (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    role TEXT,
+    content TEXT,
+    created_at TEXT,
+    FOREIGN KEY(session_id) REFERENCES sessions(id)
+);
+
+CREATE TABLE traces (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    step_index INTEGER,
+    agent_role TEXT,
+    event_type TEXT,
+    content TEXT,
+    created_at TEXT,
+    FOREIGN KEY(session_id) REFERENCES sessions(id)
+);
+
+CREATE TABLE tool_calls (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    tool_name TEXT,
+    arguments_json TEXT,
+    result_json TEXT,
+    status TEXT,
+    created_at TEXT,
+    FOREIGN KEY(session_id) REFERENCES sessions(id)
+);
+
+CREATE TABLE model_calls (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    role TEXT,
+    endpoint TEXT,
+    prompt_preview TEXT,
+    response_preview TEXT,
+    latency_ms INTEGER,
+    status TEXT,
+    created_at TEXT,
+    FOREIGN KEY(session_id) REFERENCES sessions(id)
+);
+```
+
+---
+
+## 23. Context Management
+
+Implement a context manager to avoid sending huge history to every model.
+
+Context should include:
+
+```text
+current user request
+task goal
+current task graph
+important previous decisions
+recent observations
+relevant files
+summarized trace
+```
+
+Do not send full traces unless needed.
+
+When trace gets long:
+
+```text
+Send trace to summarizer.
+Store summary.
+Use summary in future calls.
+```
+
+Context object:
+
+```json
+{
+  "session_id": "session_001",
+  "user_goal": "Create a Python script.",
+  "current_mode": "coding",
+  "task_summary": "The user wants a simple calculator.",
+  "important_decisions": [],
+  "recent_observations": [],
+  "active_files": [],
+  "trace_summary": ""
+}
+```
+
+---
+
+## 24. Error Handling
+
+The system should handle:
+
+```text
+model server offline
+model timeout
+invalid JSON from model
+tool validation failure
+tool execution failure
+user confirmation denied
+vision model uncertainty
+shell timeout
+file permission error
+```
+
+For invalid JSON:
+
+1. Try to parse with tolerant parser.
+2. Ask the same model to repair JSON.
+3. Fall back to plain-text handling.
+4. Log the failure.
+
+For model timeout:
+
+1. Retry once.
+2. Restart model server if configured.
+3. Return a useful error to UI.
+4. Save trace.
+
+---
+
+## 25. Logging and Trace
+
+Every orchestration step should be logged.
+
+Trace event schema:
+
+```json
+{
+  "id": "trace_001",
+  "session_id": "session_001",
+  "timestamp": "2026-01-01T12:00:00",
+  "agent_role": "supervisor",
+  "event_type": "plan",
+  "content": "...",
+  "metadata": {
+    "latency_ms": 1234,
+    "tokens": null
+  }
+}
+```
+
+Trace event types:
+
+```text
+user_message
+classification
+plan
+delegation
+agent_response
+critic_response
+tool_request
+tool_result
+confirmation_request
+confirmation_response
+vision_observation
+final_answer
+error
+```
+
+---
+
+## 26. Implementation Phases
+
+### Phase 0 — Project Skeleton
+
+Create:
+
+```text
+FastAPI backend
+basic web UI
+config loader
+model registry
+model client
+single supervisor call
+```
+
+Acceptance criteria:
+
+```text
+User can open UI.
+User sends message.
+Backend calls supervisor endpoint.
+Final answer appears in UI.
+Trace shows supervisor call.
+```
+
+---
+
+### Phase 1 — Multi-Agent Text Orchestration
+
+Add:
+
+```text
+fast coder agent
+strong coder agent
+reasoning critic
+contrarian critic
+orchestration modes
+trace panel
+```
+
+Acceptance criteria:
+
+```text
+User sends coding task.
+Supervisor creates plan.
+Fast coder responds.
+Strong coder improves.
+Critic reviews.
+Supervisor finalizes.
+UI shows final answer and trace.
+```
+
+---
+
+### Phase 2 — Session Storage
+
+Add:
+
+```text
+SQLite
+session history
+message storage
+trace storage
+model call logs
+```
+
+Acceptance criteria:
+
+```text
+Sessions persist after backend restart.
+User can reopen previous session.
+Trace is saved.
+```
+
+---
+
+### Phase 3 — Filesystem Tools
+
+Add:
+
+```text
+workspace directory
+read_file
+write_file
+list_dir
+file_exists
+tool executor
+safety validation
+```
+
+Acceptance criteria:
+
+```text
+Supervisor can request file creation.
+Executor writes only inside workspace.
+UI shows tool call and result.
+User can view created files.
+```
+
+---
+
+### Phase 4 — Shell Tools
+
+Add:
+
+```text
+run_command
+command timeout
+stdout/stderr capture
+blocked command filter
+confirmation system
+```
+
+Acceptance criteria:
+
+```text
+Orchestrator can create a script.
+Executor can run it.
+Errors are returned to coding agents.
+Coding agents can fix the script.
+```
+
+---
+
+### Phase 5 — Project Mode
+
+Add:
+
+```text
+create project folder
+multi-file writing
+run tests
+repair loop
+final project summary
+```
+
+Acceptance criteria:
+
+```text
+User asks for a small app.
+System creates files.
+System runs tests.
+System fixes errors.
+Final answer explains what was built.
+```
+
+---
+
+### Phase 6 — Vision Observation
+
+Add:
+
+```text
+screenshot tool
+vision agent
+vision observation schema
+screenshot display in UI
+```
+
+Acceptance criteria:
+
+```text
+User asks what is on screen.
+System captures screenshot.
+Vision agent describes screen.
+Supervisor returns answer.
+```
+
+---
+
+### Phase 7 — GUI Control
+
+Add:
+
+```text
+click
+type_text
+press_key
+hotkey
+wait
+active window detection
+one-action GUI loop
+GUI permission toggle
+```
+
+Acceptance criteria:
+
+```text
+User asks system to open a simple app.
+System observes screen.
+Supervisor selects one action.
+Executor performs action.
+System observes again.
+Task completes.
+```
+
+---
+
+### Phase 8 — Browser / App Automation
+
+Add:
+
+```text
+browser control
+form filling
+download detection
+local HTML test pages
+safe browser sandbox
+```
+
+Acceptance criteria:
+
+```text
+System can fill a local test form.
+System can verify result through screenshot or DOM/tool observation.
+```
+
+---
+
+### Phase 9 — Evaluation Harness
+
+Add benchmark tasks.
+
+Task categories:
+
+```text
+simple chat
+code generation
+code repair
+multi-file project
+file operation
+shell execution
+vision observation
+GUI navigation
+```
+
+Benchmark result schema:
+
+```json
+{
+  "task_id": "bench_001",
+  "mode": "coding",
+  "success": true,
+  "steps": 5,
+  "latency_ms": 45231,
+  "model_roles_used": [
+    "supervisor",
+    "coder_fast",
+    "coder_strong",
+    "reasoning_critic"
+  ],
+  "errors": []
+}
+```
+
+Acceptance criteria:
+
+```text
+Run benchmark suite.
+Save results.
+Compare model configs.
+Generate report.
+```
+
+---
+
+## 27. First MVP to Build Immediately
+
+Build the first version in this order:
+
+1. Create repo structure.
+2. Create `config/models.yaml`.
+3. Create FastAPI backend.
+4. Create model client.
+5. Create supervisor-only chat.
+6. Create basic web UI.
+7. Add trace panel.
+8. Add fast coder call.
+9. Add strong coder call.
+10. Add reasoning critic call.
+11. Add supervisor final synthesis.
+12. Save trace in memory first.
+13. Add SQLite later.
+
+The first working pipeline should be:
+
+```text
+User prompt
+ ↓
+Supervisor plan
+ ↓
+Fast coder
+ ↓
+Strong coder
+ ↓
+Reasoning critic
+ ↓
+Supervisor final answer
+ ↓
+UI final answer + trace
+```
+
+No tools in the first MVP.
+
+---
+
+## 28. Minimal Backend Files for MVP
+
+Create these files first:
+
+```text
+src/main.py
+src/models/model_client.py
+src/models/model_registry.py
+src/agents/base_agent.py
+src/agents/supervisor_agent.py
+src/agents/coder_fast_agent.py
+src/agents/coder_strong_agent.py
+src/agents/reasoning_critic_agent.py
+src/core/orchestrator.py
+src/core/trace.py
+config/models.yaml
+web/index.html
+web/styles.css
+web/app.js
+```
+
+---
+
+## 29. MVP API Flow
+
+```text
+POST /api/chat
+ ↓
+orchestrator.handle_message()
+ ↓
+supervisor.create_plan()
+ ↓
+coder_fast.run()
+ ↓
+coder_strong.run()
+ ↓
+reasoning_critic.run()
+ ↓
+supervisor.finalize()
+ ↓
+return answer + trace
+```
+
+---
+
+## 30. MVP UI Flow
+
+```text
+User types prompt.
+User clicks Run.
+UI shows "Running supervisor..."
+UI updates trace after each step.
+UI shows "Running fast coder..."
+UI shows "Running strong coder..."
+UI shows "Running critic..."
+UI shows "Finalizing..."
+Final answer appears.
+Trace remains expandable.
+```
+
+---
+
+## 31. Acceptance Test for MVP
+
+Test prompt:
+
+```text
+Create a Python script that asks for two numbers, adds them, and prints the result. Also explain how to run it.
+```
+
+Expected behavior:
+
+```text
+Supervisor creates simple coding plan.
+Fast coder writes initial code.
+Strong coder improves validation or structure.
+Critic identifies possible input errors.
+Supervisor final answer gives working Python script and run instructions.
+Trace panel shows every agent step.
+```
+
+Another test prompt:
+
+```text
+Review this Python code and tell me what is wrong:
+
+x = input("Number: ")
+print(x + 1)
+```
+
+Expected behavior:
+
+```text
+System identifies string/int issue.
+Coding agents propose fix.
+Critic checks edge cases.
+Supervisor returns clean corrected code.
+```
+
+---
+
+## 32. Future Upgrade Requirement
+
+The architecture must allow upgrading models by editing only config.
+
+Example future change:
+
+```yaml
+roles:
+  supervisor:
+    model_id: "<NEW_SUPERVISOR_MODEL>"
+    endpoint: "http://127.0.0.1:9001/v1/chat/completions"
+```
+
+No Python code should require changes.
+
+The same role interface must work as long as the model endpoint supports chat completion.
+
+---
+
+## 33. Final Development Rule
+
+Do not build GUI control first.
+
+Build in this order:
+
+```text
+1. Orchestration
+2. Multi-agent text workflow
+3. Trace/debug UI
+4. Filesystem tools
+5. Shell tools
+6. Coding repair loop
+7. Vision
+8. GUI control
+9. Benchmarks
+```
+
+This avoids building a flashy but unstable desktop agent before the reasoning layer is reliable.
+
+The first milestone is a working local multi-agent coding/reasoning orchestrator with a polished UI and trace panel.

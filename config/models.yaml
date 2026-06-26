@@ -1,0 +1,106 @@
+# config/models.yaml
+#
+# Role-based model registry. The orchestrator only ever refers to ROLES,
+# never to concrete model names. Swapping a model = editing this file only.
+#
+# IMPORTANT (8-12GB GPU reality):
+#   You cannot hold all of these on the GPU at once. Several roles deliberately
+#   SHARE a gguf so the ModelServerManager can avoid reloading weights when it
+#   swaps between them. The `gguf` + `port` fields below are what the server
+#   manager uses to decide "is the model this role needs already running?".
+#
+# PHASE 0 / MVP: ignore the per-role endpoints and point EVERYTHING at the
+# single running server (127.0.0.1:8001). Set `single_endpoint_mode: true` and
+# the registry will override every role's endpoint with `single_endpoint`.
+# This lets you build the whole orchestration loop on one model first.
+
+backend_defaults:
+  provider: "openai_compatible"
+  timeout_seconds: 300
+  max_retries: 2
+
+# --- MVP switch -------------------------------------------------------------
+# While true, every role resolves to `single_endpoint` regardless of the
+# per-role endpoint below. Flip to false once ModelServerManager + real
+# per-role servers exist.
+single_endpoint_mode: true
+single_endpoint: "http://127.0.0.1:8001/v1/chat/completions"
+
+# Concrete gguf files live here. Only ~3 real downloads back all 7 roles.
+model_paths:
+  qwen25_7b_instruct: "models/Qwen2.5-7B-Instruct-Q4_K_M.gguf"
+  qwen25_coder_7b:    "models/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf"
+  qwen25_coder_3b:    "models/Qwen2.5-Coder-3B-Instruct-Q4_K_M.gguf"
+  qwen25_3b_instruct: "models/Qwen2.5-3B-Instruct-Q4_K_M.gguf"
+  # vision is deferred to Phase 6 - listed for completeness only
+  qwen25_vl_7b:       "models/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf"
+  qwen25_vl_7b_mmproj: "models/Qwen2.5-VL-7B-Instruct-mmproj-f16.gguf"
+
+roles:
+  supervisor:
+    gguf: qwen25_7b_instruct
+    endpoint: "http://127.0.0.1:8001/v1/chat/completions"
+    temperature: 0.2
+    max_tokens: 3000
+    context_window: 8192
+    capabilities: [planning, reasoning, delegation, final_response]
+    can_call_tools: false
+
+  coder_fast:
+    gguf: qwen25_coder_3b
+    endpoint: "http://127.0.0.1:8002/v1/chat/completions"
+    temperature: 0.15
+    max_tokens: 3000
+    context_window: 8192
+    capabilities: [coding, patching, tests]
+    can_call_tools: false
+
+  coder_strong:
+    gguf: qwen25_coder_7b
+    endpoint: "http://127.0.0.1:8003/v1/chat/completions"
+    temperature: 0.15
+    max_tokens: 4000
+    context_window: 8192
+    capabilities: [architecture, coding, refactoring, code_review]
+    can_call_tools: false
+
+  reasoning_critic:
+    # reuses the supervisor gguf -> no extra download, no reload if supervisor
+    # was the previous role on the same port.
+    gguf: qwen25_7b_instruct
+    endpoint: "http://127.0.0.1:8001/v1/chat/completions"
+    temperature: 0.25
+    max_tokens: 3000
+    context_window: 8192
+    capabilities: [critique, reasoning, edge_case_analysis]
+    can_call_tools: false
+
+  contrarian_critic:
+    # same weights as supervisor, hotter temperature for a different angle.
+    gguf: qwen25_7b_instruct
+    endpoint: "http://127.0.0.1:8001/v1/chat/completions"
+    temperature: 0.45
+    max_tokens: 2500
+    context_window: 8192
+    capabilities: [adversarial_review, alternative_reasoning]
+    can_call_tools: false
+
+  summarizer:
+    gguf: qwen25_3b_instruct
+    endpoint: "http://127.0.0.1:8007/v1/chat/completions"
+    temperature: 0.1
+    max_tokens: 1500
+    context_window: 4096
+    capabilities: [summarization, compression, classification]
+    can_call_tools: false
+
+  vision:
+    # Phase 6 - do not wire up yet.
+    gguf: qwen25_vl_7b
+    mmproj: qwen25_vl_7b_mmproj
+    endpoint: "http://127.0.0.1:8006/v1/chat/completions"
+    temperature: 0.1
+    max_tokens: 2000
+    context_window: 4096
+    capabilities: [vision, screenshot_understanding, gui_observation]
+    can_call_tools: false

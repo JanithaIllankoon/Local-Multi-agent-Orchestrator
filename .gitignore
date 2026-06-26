@@ -1,0 +1,24 @@
+# Local model weights - never commit GGUFs (multi-GB)
+models/
+*.gguf
+
+# Agent working dir
+workspace/
+
+# Local DB / traces
+*.db
+*.sqlite
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
