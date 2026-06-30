@@ -19,23 +19,25 @@ backend_defaults:
   timeout_seconds: 600          # big models on this hardware are slow; be patient
   max_retries: 2
 
-single_endpoint_mode: true
+single_endpoint_mode: false
 single_endpoint: "http://127.0.0.1:8001/v1/chat/completions"
 
 # Phase 2: when true, the ModelServerManager auto-launches the right
 # llama-server for each role and stops the previous one (one model at a time on
 # 8GB VRAM). Requires single_endpoint_mode: false. Leave false to keep starting
 # servers by hand (the Phase 0/1 workflow). Launch specs: server_commands.yaml.
-manage_servers: false
+manage_servers: true
 
 # Concrete gguf files live in models/ (git-ignored). Download targets:
 model_paths:
-  # supervisor: Qwen3-Coder-30B-A3B-Instruct (MoE 30B / ~3B active), Q4_K_M (~17GB)
+  # strong coder: Qwen3-Coder-30B-A3B-Instruct (MoE 30B / ~3B active), Q4_K_M (~17GB)
   qwen3_coder_30b_a3b: "models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
-  # strong coder: Qwen3.6-27B dense, Q3_K_S (~11.5GB)
+  # orchestrator: Qwen3.6-27B dense, Q3_K_S (~11.5GB)
   qwen36_27b:          "models/Qwen3.6-27B-Q3_K_S.gguf"
-  # uncensored/contrarian: Qwen3-8B abliterated, Q3_K_M
+  # fast coder: Qwen3-8B abliterated, Q3_K_M
   qwen3_8b_abliterated: "models/Qwen3-8B-abliterated-q3_k_m.gguf"
+  # critic: Qwythos-9B-Claude-Mythos, Q4_K_M
+  qwythos_9b:           "models/Qwythos-9B-Claude-Mythos-5-1M-Q4_K_M.gguf"
   # reasoner: DeepSeek-R1-0528-Qwen3-8B, Q4_K_M
   deepseek_r1_qwen3_8b: "models/DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf"
   # vision: Qwen3-VL-8B-Thinking abliterated, Q4_K_M
@@ -45,11 +47,12 @@ model_paths:
   qwen3_vl_8b_mmproj:   "models/Qwen3-VL-8B-Thinking-mmproj-f16.gguf"  # TODO: not yet downloaded
 
 roles:
-  # The supervisor also handles tool calling. It runs on every request, so it
-  # is the model to keep mmap-warm. MoE -> put experts on CPU, keep the active
-  # path + KV on GPU (--n-cpu-moe in server_commands.yaml).
+  # Orchestrator: plans, delegates, and writes the final answer. Dense 27B,
+  # runs first AND last on every request (-ngl 35 in server_commands.yaml;
+  # spills to CPU/disk, so it's the slow one - that's the trade for putting the
+  # biggest reasoning model in the driver's seat).
   supervisor:
-    gguf: qwen3_coder_30b_a3b
+    gguf: qwen36_27b
     endpoint: "http://127.0.0.1:8001/v1/chat/completions"
     temperature: 0.2
     max_tokens: 4000
@@ -58,10 +61,9 @@ roles:
     can_call_tools: true
 
   coder_fast:
-    # No tiny dedicated coder in this set; reuse the supervisor MoE for fast
-    # coding too (it is already loaded and is itself a strong coder).
-    gguf: qwen3_coder_30b_a3b
-    endpoint: "http://127.0.0.1:8001/v1/chat/completions"
+    # Fast first-draft coder: small 8B abliterated model on its own port.
+    gguf: qwen3_8b_abliterated
+    endpoint: "http://127.0.0.1:8002/v1/chat/completions"
     temperature: 0.15
     max_tokens: 4000
     context_window: 8192
@@ -69,15 +71,18 @@ roles:
     can_call_tools: false
 
   coder_strong:
-    gguf: qwen36_27b
+    # Strong coder: Qwen3-Coder-30B-A3B MoE. Experts on CPU, active path on GPU
+    # (--n-cpu-moe in server_commands.yaml).
+    gguf: qwen3_coder_30b_a3b
     endpoint: "http://127.0.0.1:8003/v1/chat/completions"
     temperature: 0.15
     max_tokens: 4000
-    context_window: 8192          # dense 27B is the slowest; keep context lean
+    context_window: 8192
     capabilities: [architecture, coding, refactoring, code_review]
     can_call_tools: false
 
   reasoning_critic:
+    # Reasoner: hands its analysis back to the orchestrator for synthesis.
     gguf: deepseek_r1_qwen3_8b
     endpoint: "http://127.0.0.1:8004/v1/chat/completions"
     temperature: 0.3              # R1 distill reasons via long chain-of-thought
@@ -87,9 +92,10 @@ roles:
     can_call_tools: false
 
   contrarian_critic:
-    gguf: qwen3_8b_abliterated
+    # Critic model: Qwythos-9B-Claude-Mythos. Harsh second opinion (Deep Review).
+    gguf: qwythos_9b
     endpoint: "http://127.0.0.1:8005/v1/chat/completions"
-    temperature: 0.5             # low-refusal model for harsh second opinions
+    temperature: 0.5
     max_tokens: 3000
     context_window: 8192
     capabilities: [adversarial_review, alternative_reasoning, low_refusal]

@@ -28,17 +28,24 @@ defaults:
   health_poll_seconds: 2
 
 servers:
-  # Supervisor + tool calling. MoE: active path on GPU, experts on CPU.
+  # Orchestrator: dense 27B. Runs first and last on every request; uses
+  # CPU+disk, so it's the slow one. Lower -ngl if you OOM VRAM.
   supervisor:
     port: 8001
-    model: "models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
-    args: ["--jinja", "-c", "8192", "-ngl", "99", "--n-cpu-moe", "28"]
-
-  # Strong coder: dense 27B. Heaviest model; uses CPU+disk. Slow by design.
-  coder_strong:
-    port: 8003
     model: "models/Qwen3.6-27B-Q3_K_S.gguf"
     args: ["--jinja", "-c", "8192", "-ngl", "35"]
+
+  # Fast coder: 8B abliterated, fits fully on GPU.
+  coder_fast:
+    port: 8002
+    model: "models/Qwen3-8B-abliterated-q3_k_m.gguf"
+    args: ["--jinja", "-c", "8192", "-ngl", "99"]
+
+  # Strong coder: Qwen3-Coder-30B-A3B MoE. Active path on GPU, experts on CPU.
+  coder_strong:
+    port: 8003
+    model: "models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
+    args: ["--jinja", "-c", "8192", "-ngl", "99", "--n-cpu-moe", "28"]
 
   # Reasoner: DeepSeek-R1 distill, fits fully on GPU.
   reasoning_critic:
@@ -46,10 +53,10 @@ servers:
     model: "models/DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf"
     args: ["--jinja", "-c", "8192", "-ngl", "99"]
 
-  # Uncensored / contrarian: 8B abliterated, fits fully on GPU.
+  # Critic: Qwythos-9B-Claude-Mythos, fits fully on GPU.
   contrarian_critic:
     port: 8005
-    model: "models/Qwen3-8B-abliterated-q3_k_m.gguf"
+    model: "models/Qwythos-9B-Claude-Mythos-5-1M-Q4_K_M.gguf"
     args: ["--jinja", "-c", "8192", "-ngl", "99"]
 
   # Vision (Phase 6): Qwen3-VL-8B-Thinking + mmproj.
