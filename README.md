@@ -106,15 +106,16 @@ Hugging Face into a local `models/` folder.
 
 | Role | Model | What it does |
 |------|-------|--------------|
-| 🧭 Supervisor / tools | [Qwen3-Coder-30B-A3B-Instruct](https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct) | Plans, delegates, calls tools, writes the final answer |
-| ⚡ Fast coder | (shares the supervisor model) | Quick first-draft implementations |
-| 🛠️ Strong coder | [Qwen3.6-27B](https://huggingface.co/Qwen/Qwen3.6-27B) | Reviews and hardens code, harder problems |
-| 🔍 Reasoning critic | [DeepSeek-R1-0528-Qwen3-8B](https://huggingface.co/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF) | Finds flaws, edge cases, weak assumptions |
-| 😈 Contrarian critic | [Qwen3-8B-abliterated](https://huggingface.co/huihui-ai/Qwen3-8B-abliterated) | Low-refusal harsh second opinions *(planned)* |
-| 👁️ Vision observer | [Qwen3-VL-8B-Thinking](https://huggingface.co/Qwen/Qwen3-VL-8B-Thinking) | Describes screenshots / GUI state *(Phase 6)* |
+| 🧭 Orchestrator / tools | [Qwen3.6-27B](https://huggingface.co/Qwen/Qwen3.6-27B) | Plans, delegates, calls tools, writes the final answer |
+| ⚡ Fast coder | [Qwen3-8B-abliterated](https://huggingface.co/huihui-ai/Qwen3-8B-abliterated) | Quick first-draft implementations |
+| 🛠️ Strong coder | [Qwen3-Coder-30B-A3B-Instruct](https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct) | Reviews and hardens code, harder problems |
+| 🔍 Reasoner | [DeepSeek-R1-0528-Qwen3-8B](https://huggingface.co/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF) | Finds flaws, edge cases, then hands back to the Orchestrator |
+| 😈 Critic | Qwythos-9B-Claude-Mythos | Blunt second opinion *(Deep Review mode)* |
+| 👁️ Vision observer | [Qwen3-VL-8B-Thinking](https://huggingface.co/Qwen/Qwen3-VL-8B-Thinking) | Describes attached images for the rest of the team |
 
-> On an 8GB GPU these run **one at a time** (the orchestrator swaps between them),
-> so each model gets the full GPU while it's active.
+> On an 8GB GPU these run **one at a time** — the orchestrator launches the model
+> for each role and stops the previous one, so each gets the full GPU while active.
+> Each role has its own model and port; swap any of them in `config/models.yaml`.
 
 ## Tech stack
 
@@ -139,7 +140,8 @@ local model; per-role models land in Phase 2.
 - [ ] **Phase 3** — Filesystem tools (sandboxed workspace)
 - [ ] **Phase 4** — Shell execution + self-repair loop
 - [ ] **Phase 5** — Multi-file project mode
-- [ ] **Phase 6** — Vision: understand screenshots
+- [~] **Phase 6** — Vision: attach an image and the Vision Observer describes it
+  for the pipeline (image upload + multimodal agent wired; screenshot capture later)
 - [ ] **Phase 7** — GUI control (one safe action at a time)
 - [ ] **Phase 8** — Evaluation & benchmarks
 
@@ -166,6 +168,18 @@ Then open **http://127.0.0.1:8000**, type a prompt, and pick a mode
 (Simple / Coding / Deep Review). The agent trace fills in live on the right,
 and every conversation is saved — past **sessions** appear in the left sidebar
 and reopen with their full trace, surviving a backend restart.
+
+### Working with images
+
+Click 📎 next to the input to attach one or more images. The **Vision Observer**
+(Qwen3-VL) looks at them first and its description is fed into whichever mode
+runs, so the coders and critics can reason about a picture without being
+multimodal themselves.
+
+> The vision model needs its companion `mmproj` file
+> (`Qwen3-VL-8B-Thinking-mmproj-f16.gguf`) in `models/` — download it from the
+> model's Hugging Face page. Without it, attaching an image errors with a clear
+> "missing file" message.
 
 ### Automatic model swapping (optional)
 
