@@ -31,8 +31,13 @@
       <div id="messages"></div>
       <div class="composer">
         <textarea id="input" placeholder="Ask the orchestrator..."></textarea>
-        <button id="send">Run</button>
+        <div class="composer-actions">
+          <input type="file" id="image-input" accept="image/*" multiple hidden />
+          <button id="attach" title="Attach image(s) for the vision agent">📎</button>
+          <button id="send">Run</button>
+        </div>
       </div>
+      <div id="attachments"></div>
     </section>
 
     <!-- Right: the internal agent steps (for debugging / curiosity) -->

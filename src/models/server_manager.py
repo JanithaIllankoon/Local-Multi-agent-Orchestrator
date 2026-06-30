@@ -116,6 +116,15 @@ class ModelServerManager:
             raise FileNotFoundError(
                 f"Model for server '{name}' not found: {model_path}"
             )
+        # Validate any path-like extra args too (e.g. --mmproj for vision), so a
+        # missing companion file fails clearly instead of crashing llama-server.
+        for tok in s.get("args", []):
+            if isinstance(tok, str) and (tok.startswith("models/") or tok.startswith("models\\")):
+                p = (_REPO_ROOT / tok).resolve()
+                if not p.exists():
+                    raise FileNotFoundError(
+                        f"Server '{name}' needs a file that is missing: {p}"
+                    )
 
         argv = self._build_argv(name)
         # Popen with a LIST -> correct quoting despite the space in the path.

@@ -8,6 +8,9 @@ const modeEl = document.getElementById("mode");
 const statusEl = document.getElementById("status");
 const sessionsEl = document.getElementById("sessions");
 const newChatBtn = document.getElementById("new-chat");
+const attachBtn = document.getElementById("attach");
+const imageInput = document.getElementById("image-input");
+const attachmentsEl = document.getElementById("attachments");
 
 // Which session the current chat belongs to. null = a fresh, unsaved chat;
 // the backend assigns an id on the first turn and sends it back as a meta event.
@@ -20,8 +23,12 @@ const ROLE_LABELS = {
   coder_strong: "Strong Coder",
   reasoning_critic: "Reasoning Critic",
   contrarian_critic: "Contrarian Critic",
+  vision: "Vision Observer",
   system: "System",
 };
+
+// Images attached for the next message (data URLs the vision agent reads).
+let attachedImages = [];
 
 function addBubble(who, text, cls) {
   const div = document.createElement("div");
@@ -76,14 +83,19 @@ async function run() {
   sendBtn.disabled = true;
   inputEl.value = "";
   traceEl.innerHTML = "";
-  addBubble("You", message, "user");
+  const images = attachedImages.slice();
+  addBubble("You", message + (images.length ? `  [📎 ${images.length} image(s)]` : ""), "user");
+  clearAttachments();
   statusEl.textContent = "Running...";
 
   try {
     const resp = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, mode: modeEl.value, session_id: currentSessionId }),
+      body: JSON.stringify({
+        message, mode: modeEl.value, session_id: currentSessionId,
+        images: images.length ? images : null,
+      }),
     });
 
     // Read the SSE stream line by line as the server sends each agent step.
@@ -203,6 +215,42 @@ async function deleteSession(id) {
   await fetch(`/api/sessions/${id}`, { method: "DELETE" });
   if (id === currentSessionId) startNewChat();
   loadSessions();
+}
+
+// --- image attachments -----------------------------------------------------
+
+attachBtn.onclick = () => imageInput.click();
+
+// Read each picked file as a data URL the vision agent can consume.
+imageInput.onchange = () => {
+  for (const file of imageInput.files) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      attachedImages.push(reader.result);
+      renderAttachments();
+    };
+    reader.readAsDataURL(file);
+  }
+  imageInput.value = ""; // allow re-picking the same file
+};
+
+function renderAttachments() {
+  attachmentsEl.innerHTML = "";
+  attachedImages.forEach((src, i) => {
+    const chip = document.createElement("span");
+    chip.className = "attach-chip";
+    chip.innerHTML = `📎 image ${i + 1} <button class="del">×</button>`;
+    chip.querySelector(".del").onclick = () => {
+      attachedImages.splice(i, 1);
+      renderAttachments();
+    };
+    attachmentsEl.appendChild(chip);
+  });
+}
+
+function clearAttachments() {
+  attachedImages = [];
+  renderAttachments();
 }
 
 // Paint the sidebar on first load.

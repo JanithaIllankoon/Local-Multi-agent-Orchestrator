@@ -155,6 +155,33 @@ main {
 }
 #send:disabled { opacity: 0.5; cursor: default; }
 
+.composer-actions { display: flex; flex-direction: column; gap: 8px; }
+#attach {
+  background: var(--panel-deep);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 14px;
+  cursor: pointer;
+  font-size: 16px;
+}
+#attach:hover { border-color: var(--accent); }
+
+#attachments { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 8px; }
+.attach-chip {
+  font-size: 12px;
+  background: var(--panel-deep);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+  color: var(--muted);
+}
+.attach-chip .del {
+  background: none; border: none; color: var(--muted);
+  cursor: pointer; font-size: 13px; padding: 0 0 0 2px;
+}
+.attach-chip .del:hover { color: var(--danger); }
+
 /* Trace cards - one per agent step */
 .trace-card {
   border: 1px solid var(--border);

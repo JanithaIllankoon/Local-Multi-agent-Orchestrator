@@ -33,12 +33,28 @@ def _msg(role: str, content: str) -> dict[str, str]:
     return {"role": role, "content": content}
 
 
-async def handle_message(message: str, mode: str = "auto") -> AsyncIterator[TraceEvent]:
+async def handle_message(
+    message: str, mode: str = "auto", images: list[str] | None = None,
+) -> AsyncIterator[TraceEvent]:
     """
     Entry point used by the API. Picks a flow and streams its trace events.
     'auto' uses a keyword guess for now; later the supervisor will classify.
+
+    If images are attached, the Vision Observer runs first and its description
+    is folded into the request the rest of the pipeline sees - so any mode can
+    reason about a picture without the coders/critics being multimodal.
+    `images` are data URLs (e.g. "data:image/png;base64,...").
     """
     try:
+        request = message
+        if images:
+            vision = await _run_vision(message, images)
+            yield TraceEvent("vision", "agent_response", vision.content,
+                             reasoning=vision.reasoning, latency_ms=vision.latency_ms)
+            request = (f"{message}\n\n"
+                       f"[What the vision agent sees in the attached image(s)]:\n"
+                       f"{vision.content}")
+
         if mode in ("simple", "coding", "deep_review"):
             chosen = mode
         else:
@@ -46,17 +62,31 @@ async def handle_message(message: str, mode: str = "auto") -> AsyncIterator[Trac
             chosen = "coding" if _looks_like_coding(message) else "simple"
 
         if chosen == "deep_review":
-            async for ev in run_deep_review_mode(message):
+            async for ev in run_deep_review_mode(request):
                 yield ev
         elif chosen == "coding":
-            async for ev in run_coding_mode(message):
+            async for ev in run_coding_mode(request):
                 yield ev
         else:
-            async for ev in run_simple_mode(message):
+            async for ev in run_simple_mode(request):
                 yield ev
     except Exception as e:
         # Surface any failure to the UI instead of hanging silently.
         yield TraceEvent("system", "error", f"Something went wrong: {e}", is_final=True)
+
+
+async def _run_vision(message: str, images: list[str]):
+    """Ask the Vision Observer to describe the attached image(s)."""
+    content: list[dict] = [
+        {"type": "text",
+         "text": f"Describe these image(s) for this request:\n{message}"}
+    ]
+    for url in images:
+        content.append({"type": "image_url", "image_url": {"url": url}})
+    return await call_model(
+        "vision",
+        [_msg("system", P.VISION), {"role": "user", "content": content}],
+    )
 
 
 def _looks_like_coding(message: str) -> bool:

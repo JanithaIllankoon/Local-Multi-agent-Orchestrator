@@ -43,6 +43,7 @@ class ChatRequest(BaseModel):
     message: str
     mode: str = "auto"          # "auto" | "simple" | "coding" | "deep_review"
     session_id: int | None = None   # None -> start a new session
+    images: list[str] | None = None  # optional data-URL images for the vision agent
 
 
 @app.post("/api/chat")
@@ -70,7 +71,7 @@ async def chat(req: ChatRequest):
         # Tell the UI which session this is before any trace cards arrive.
         yield f"data: {json.dumps({'meta': 'session', 'session_id': session_id})}\n\n"
 
-        async for event in handle_message(req.message, req.mode):
+        async for event in handle_message(req.message, req.mode, images=req.images):
             db.add_trace(
                 session_id, user_msg_id,
                 event.agent_role, event.event_type, event.content,
