@@ -22,6 +22,12 @@ backend_defaults:
 single_endpoint_mode: true
 single_endpoint: "http://127.0.0.1:8001/v1/chat/completions"
 
+# Phase 2: when true, the ModelServerManager auto-launches the right
+# llama-server for each role and stops the previous one (one model at a time on
+# 8GB VRAM). Requires single_endpoint_mode: false. Leave false to keep starting
+# servers by hand (the Phase 0/1 workflow). Launch specs: server_commands.yaml.
+manage_servers: false
+
 # Concrete gguf files live in models/ (git-ignored). Download targets:
 model_paths:
   # supervisor: Qwen3-Coder-30B-A3B-Instruct (MoE 30B / ~3B active), Q4_K_M (~17GB)

@@ -6,6 +6,7 @@ and never worries about URLs, retries, or which model is behind the role.
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -38,6 +39,13 @@ async def call_model(
     Retries on network/5xx errors per backend_defaults in models.yaml.
     """
     cfg = registry.get_role(role)
+
+    # Phase 2: make sure this role's model server is the one running before we
+    # call it (may stop another model and load this one - blocking, so run it
+    # off the event loop). No-op when manage_servers is off.
+    if registry.manage_servers:
+        from .server_manager import manager
+        await asyncio.to_thread(manager.ensure_running_for_endpoint, cfg.endpoint)
 
     payload = {
         "model": role,  # llama.cpp ignores this, but the API expects the field

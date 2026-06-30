@@ -134,7 +134,8 @@ local model; per-role models land in Phase 2.
 - [x] **Phase 0** — Backend + chat UI + live agent trace ✅
 - [x] **Phase 1** — Multi-agent pipeline: supervisor → 2 coders → reasoning critic
   → contrarian critic, with Coding and Deep Review modes ✅
-- [ ] **Phase 2** — Session persistence + automatic local model swapping (each role its own model)
+- [x] **Phase 2** — Session persistence (SQLite: sessions, messages, full trace)
+  + automatic local model swapping (one server per role, swapped on demand) ✅
 - [ ] **Phase 3** — Filesystem tools (sandboxed workspace)
 - [ ] **Phase 4** — Shell execution + self-repair loop
 - [ ] **Phase 5** — Multi-file project mode
@@ -162,7 +163,26 @@ python -m uvicorn src.main:app --port 8000
 ```
 
 Then open **http://127.0.0.1:8000**, type a prompt, and pick a mode
-(Simple / Coding). The agent trace fills in live on the right.
+(Simple / Coding / Deep Review). The agent trace fills in live on the right,
+and every conversation is saved — past **sessions** appear in the left sidebar
+and reopen with their full trace, surviving a backend restart.
+
+### Automatic model swapping (optional)
+
+By default everything talks to one hand-started server (`single_endpoint_mode:
+true`). To let the orchestrator run a different model per role — swapping them
+one at a time so an 8GB GPU is never overcommitted — edit
+[`config/models.yaml`](config/models.yaml):
+
+```yaml
+single_endpoint_mode: false
+manage_servers: true
+```
+
+Now you don't run `start_model.ps1` yourself: the backend launches the right
+`llama-server` for each agent and stops the previous one, using the launch
+specs in [`config/server_commands.yaml`](config/server_commands.yaml). The
+first call to a cold model is slow while it loads.
 
 ## License
 

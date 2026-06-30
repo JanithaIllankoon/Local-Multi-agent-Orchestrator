@@ -9,6 +9,7 @@
 <body>
   <header>
     <span class="logo">🧠 Local Multi-Agent Orchestrator</span>
+    <button id="new-chat" title="Start a new session">+ New chat</button>
     <select id="mode" title="Orchestration mode">
       <option value="auto">Auto</option>
       <option value="simple">Simple</option>
@@ -18,6 +19,12 @@
   </header>
 
   <main>
+    <!-- Far left: saved sessions -->
+    <section class="panel sessions">
+      <h2>Sessions</h2>
+      <div id="sessions"></div>
+    </section>
+
     <!-- Left: the conversation with the user -->
     <section class="panel chat">
       <h2>Chat</h2>

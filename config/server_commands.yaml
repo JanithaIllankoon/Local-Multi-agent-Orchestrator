@@ -1,63 +1,59 @@
 # config/server_commands.yaml
 #
-# llama-server launch commands per role. Used by ModelServerManager once you
-# leave single_endpoint_mode (Phase 2+). For Phase 0 just run the supervisor
-# command by hand.
+# llama-server launch specs per server. Used by ModelServerManager
+# (src/models/server_manager.py) once you leave single_endpoint_mode.
 #
-# 8GB VRAM + ~12GB usable RAM rules baked in here:
+# Structured fields (model / port / args) instead of one command string on
+# purpose: the project path contains spaces, and passing a single string trips
+# argument-splitting bugs. The manager builds an argv LIST and hands it to
+# subprocess, which quotes each element correctly on Windows.
+#
+# 8GB VRAM + ~12GB usable RAM rules baked into args:
 #   --n-cpu-moe N : MoE only. Keep N experts' layers on CPU so VRAM holds the
 #                   active path + KV cache. Raise N if you OOM VRAM.
 #   -ngl 99       : offload all layers to GPU; lower it for dense models that
-#                   don't fit (the 27B will spill to CPU/disk regardless).
+#                   don't fit (the 27B spills to CPU/disk regardless).
 #   -c            : context size. Smaller = less KV-cache VRAM. Keep it lean.
-#   mmap is ON by default (do NOT pass --no-mmap) so big models page from disk
-#   instead of OOM-crashing.
+#   mmap is ON by default (do NOT pass --no-mmap) so big models page from disk.
 #
-# RUN ONE AT A TIME. Never start two big servers simultaneously.
+# RUN ONE AT A TIME. The manager stops the current server before starting the
+# next, because two big models at once would exhaust memory on this hardware.
+
+# Full path to the llama.cpp server binary (CUDA build).
+llama_server_exe: "C:\\llama\\llama-b9810-bin-win-cuda-13.3-x64\\llama-server.exe"
+
+defaults:
+  host: "127.0.0.1"
+  startup_timeout_seconds: 300   # big models load slowly; the port opens only when ready
+  health_poll_seconds: 2
 
 servers:
   # Supervisor + tool calling. MoE: active path on GPU, experts on CPU.
   supervisor:
     port: 8001
-    command: >
-      llama-server
-      -m "models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
-      --host 127.0.0.1 --port 8001
-      --jinja -c 8192 -ngl 99 --n-cpu-moe 28
+    model: "models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
+    args: ["--jinja", "-c", "8192", "-ngl", "99", "--n-cpu-moe", "28"]
 
-  # Strong coder: dense 27B. Heaviest model; will use CPU+disk. Slow by design.
+  # Strong coder: dense 27B. Heaviest model; uses CPU+disk. Slow by design.
   coder_strong:
     port: 8003
-    command: >
-      llama-server
-      -m "models/Qwen3.6-27B-Q3_K_S.gguf"
-      --host 127.0.0.1 --port 8003
-      --jinja -c 8192 -ngl 35
+    model: "models/Qwen3.6-27B-Q3_K_S.gguf"
+    args: ["--jinja", "-c", "8192", "-ngl", "35"]
 
   # Reasoner: DeepSeek-R1 distill, fits fully on GPU.
   reasoning_critic:
     port: 8004
-    command: >
-      llama-server
-      -m "models/DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf"
-      --host 127.0.0.1 --port 8004
-      --jinja -c 8192 -ngl 99
+    model: "models/DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf"
+    args: ["--jinja", "-c", "8192", "-ngl", "99"]
 
   # Uncensored / contrarian: 8B abliterated, fits fully on GPU.
   contrarian_critic:
     port: 8005
-    command: >
-      llama-server
-      -m "models/Qwen3-8B-abliterated-q3_k_m.gguf"
-      --host 127.0.0.1 --port 8005
-      --jinja -c 8192 -ngl 99
+    model: "models/Qwen3-8B-abliterated-q3_k_m.gguf"
+    args: ["--jinja", "-c", "8192", "-ngl", "99"]
 
   # Vision (Phase 6): Qwen3-VL-8B-Thinking + mmproj.
   vision:
     port: 8006
-    command: >
-      llama-server
-      -m "models/Qwen3-VL-8B-Thinking-abliterated-v1.Q4_K_M.gguf"
-      --mmproj "models/Qwen3-VL-8B-Thinking-mmproj-f16.gguf"
-      --host 127.0.0.1 --port 8006
-      -c 4096 -ngl 99
+    model: "models/Qwen3-VL-8B-Thinking-abliterated-v1.Q4_K_M.gguf"
+    args: ["--mmproj", "models/Qwen3-VL-8B-Thinking-mmproj-f16.gguf", "-c", "4096", "-ngl", "99"]

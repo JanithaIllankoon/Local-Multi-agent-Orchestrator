@@ -38,6 +38,12 @@ class ModelRegistry:
         self._single_mode = self._cfg.get("single_endpoint_mode", False)
         self._single_endpoint = self._cfg.get("single_endpoint", "")
 
+        # Phase 2: auto-launch/swap llama-servers per role. Only meaningful when
+        # we're NOT pinned to a single hand-started endpoint.
+        self._manage_servers = (
+            self._cfg.get("manage_servers", False) and not self._single_mode
+        )
+
     def get_role(self, role: str) -> RoleConfig:
         roles = self._cfg.get("roles", {})
         if role not in roles:
@@ -63,6 +69,11 @@ class ModelRegistry:
     @property
     def max_retries(self) -> int:
         return self._defaults.get("max_retries", 2)
+
+    @property
+    def manage_servers(self) -> bool:
+        """True if the ModelServerManager should auto-swap llama-servers."""
+        return self._manage_servers
 
 
 # One shared instance the whole app imports.

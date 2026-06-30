@@ -6,6 +6,12 @@ const inputEl = document.getElementById("input");
 const sendBtn = document.getElementById("send");
 const modeEl = document.getElementById("mode");
 const statusEl = document.getElementById("status");
+const sessionsEl = document.getElementById("sessions");
+const newChatBtn = document.getElementById("new-chat");
+
+// Which session the current chat belongs to. null = a fresh, unsaved chat;
+// the backend assigns an id on the first turn and sends it back as a meta event.
+let currentSessionId = null;
 
 // Friendly labels for the trace cards.
 const ROLE_LABELS = {
@@ -77,7 +83,7 @@ async function run() {
     const resp = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, mode: modeEl.value }),
+      body: JSON.stringify({ message, mode: modeEl.value, session_id: currentSessionId }),
     });
 
     // Read the SSE stream line by line as the server sends each agent step.
@@ -98,6 +104,16 @@ async function run() {
         const line = part.replace(/^data: /, "").trim();
         if (!line) continue;
         const event = JSON.parse(line);
+
+        // The first line is a meta event telling us the session id (the backend
+        // creates a session on the first turn). Track it and refresh the list.
+        if (event.meta === "session") {
+          const isNew = currentSessionId !== event.session_id;
+          currentSessionId = event.session_id;
+          if (isNew) loadSessions();
+          continue;
+        }
+
         addTraceCard(event);
         statusEl.textContent = `${ROLE_LABELS[event.agent_role] || event.agent_role}...`;
         if (event.is_final) addBubble("Orchestrator", event.content, "assistant");
@@ -117,3 +133,77 @@ sendBtn.onclick = run;
 inputEl.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") run();
 });
+
+// --- session sidebar -------------------------------------------------------
+
+// Start a brand-new, unsaved chat: clear both panels and drop the session id.
+function startNewChat() {
+  currentSessionId = null;
+  messagesEl.innerHTML = "";
+  traceEl.innerHTML = "";
+  statusEl.textContent = "Idle";
+  highlightActive();
+  inputEl.focus();
+}
+
+newChatBtn.onclick = startNewChat;
+
+// Fetch the session list and paint the sidebar.
+async function loadSessions() {
+  try {
+    const resp = await fetch("/api/sessions");
+    const { sessions } = await resp.json();
+    sessionsEl.innerHTML = "";
+    for (const s of sessions) {
+      const item = document.createElement("div");
+      item.className = "session-item";
+      item.dataset.id = s.id;
+      item.innerHTML = `<span class="title"></span><button class="del" title="Delete">×</button>`;
+      item.querySelector(".title").textContent = s.title;
+      item.querySelector(".title").onclick = () => openSession(s.id);
+      item.onclick = (e) => { if (!e.target.classList.contains("del")) openSession(s.id); };
+      item.querySelector(".del").onclick = (e) => { e.stopPropagation(); deleteSession(s.id); };
+      sessionsEl.appendChild(item);
+    }
+    highlightActive();
+  } catch (e) {
+    // Sidebar is non-critical; don't break the app if listing fails.
+  }
+}
+
+function highlightActive() {
+  for (const el of sessionsEl.querySelectorAll(".session-item")) {
+    el.classList.toggle("active", Number(el.dataset.id) === currentSessionId);
+  }
+}
+
+// Reopen a saved session: replay its messages and trace into the panels.
+async function openSession(id) {
+  const resp = await fetch(`/api/sessions/${id}`);
+  if (!resp.ok) return;
+  const data = await resp.json();
+
+  currentSessionId = id;
+  messagesEl.innerHTML = "";
+  traceEl.innerHTML = "";
+
+  for (const m of data.messages) {
+    if (m.role === "user") addBubble("You", m.content, "user");
+    else addBubble("Orchestrator", m.content, "assistant");
+  }
+  for (const t of data.traces) {
+    // Stored traces use 0/1 for is_final; addTraceCard expects a boolean.
+    addTraceCard({ ...t, is_final: !!t.is_final });
+  }
+  statusEl.textContent = "Loaded session";
+  highlightActive();
+}
+
+async function deleteSession(id) {
+  await fetch(`/api/sessions/${id}`, { method: "DELETE" });
+  if (id === currentSessionId) startNewChat();
+  loadSessions();
+}
+
+// Paint the sidebar on first load.
+loadSessions();
